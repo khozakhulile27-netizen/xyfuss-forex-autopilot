@@ -1,62 +1,113 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Iterable
 
-from xyfuss_forex_autopilot.models import EvidenceRecord, TradeIdea
+from xyfuss_forex_autopilot.models import EvidenceRecord, StrategyResult
 
 
-class HistoricalTradeInvestigator:
-    """Analyze historical wins and losses to find recurring patterns."""
+class StrategyBase:
+    name: str = "base"
 
-    def investigate(self, history: Iterable[dict]) -> dict:
-        trades = list(history)
-        if not trades:
-            return {"wins": 0, "losses": 0, "win_rate": 0.0, "patterns": [], "summary": "No historical trade data."}
-
-        wins = [trade for trade in trades if trade.get("outcome") == "win"]
-        losses = [trade for trade in trades if trade.get("outcome") == "loss"]
-        win_rate = (len(wins) / len(trades)) * 100.0 if trades else 0.0
-
-        patterns: list[str] = []
-        if wins:
-            directions = [trade.get("direction", "") for trade in wins]
-            if directions:
-                top_direction = max(set(directions), key=directions.count)
-                patterns.append(f"Most wins favored {top_direction} trades.")
-        if losses:
-            risk_contexts = [trade.get("risk_context", "") for trade in losses if trade.get("risk_context")]
-            if risk_contexts:
-                patterns.append("Losses clustered around elevated risk or weak confirmation.")
-
-        return {
-            "wins": len(wins),
-            "losses": len(losses),
-            "win_rate": round(win_rate, 2),
-            "patterns": patterns,
-            "summary": f"Historical review found {len(wins)} wins and {len(losses)} losses.",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+    def evaluate(self, symbol: str, market_data: dict) -> StrategyResult:
+        raise NotImplementedError
 
 
-class TradeIdeaBuilder:
-    def build(self, symbol: str, direction: str, score: float, confidence: float, evidence: list[dict], rationale: str) -> TradeIdea:
-        evidence_records = [
-            EvidenceRecord(
-                source=item.get("source", "unknown"),
-                signal=item.get("signal", direction),
-                score=float(item.get("score", 0.0)),
-                detail=item.get("detail", rationale),
-                confidence=float(item.get("confidence", confidence)),
+class TrendFollowerStrategy(StrategyBase):
+    name = "trend_follower"
+
+    def evaluate(self, symbol: str, market_data: dict) -> StrategyResult:
+        signal = market_data.get("signal", "NO_TRADE")
+        confidence = float(market_data.get("confidence", 0.0))
+
+        if signal == "BUY":
+            return StrategyResult(
+                strategy_name=self.name,
+                symbol=symbol,
+                score=0.7 + confidence * 0.3,
+                direction="buy",
+                confidence=confidence,
+                rationale="Trend and momentum favor upside continuation.",
             )
-            for item in evidence
-        ]
-        return TradeIdea(
+        if signal == "SELL":
+            return StrategyResult(
+                strategy_name=self.name,
+                symbol=symbol,
+                score=0.7 + confidence * 0.3,
+                direction="sell",
+                confidence=confidence,
+                rationale="Trend and momentum favor downside continuation.",
+            )
+        return StrategyResult(
+            strategy_name=self.name,
             symbol=symbol,
-            direction=direction,
-            score=score,
+            score=0.2,
+            direction="hold",
             confidence=confidence,
-            risk=max(0.0, 1.0 - confidence),
-            rationale=rationale,
-            evidence=evidence_records,
+            rationale="Market structure is too weak for directional conviction.",
         )
+
+
+class MeanReversionStrategy(StrategyBase):
+    name = "mean_reversion"
+
+    def evaluate(self, symbol: str, market_data: dict) -> StrategyResult:
+        signal = market_data.get("signal", "NO_TRADE")
+        confidence = float(market_data.get("confidence", 0.0))
+        support = float(market_data.get("support", 0.0))
+        last_close = float(market_data.get("last_close", 0.0))
+
+        if signal in {"BUY", "SELL"} and support and last_close:
+            direction = "buy" if signal == "BUY" else "sell"
+            return StrategyResult(
+                strategy_name=self.name,
+                symbol=symbol,
+                score=0.6 + confidence * 0.25,
+                direction=direction,
+                confidence=confidence,
+                rationale="Price is returning toward support/resistance after a short directional move.",
+            )
+        return StrategyResult(
+            strategy_name=self.name,
+            symbol=symbol,
+            score=0.15,
+            direction="hold",
+            confidence=confidence,
+            rationale="No mean-reversion setup with enough conviction.",
+        )
+
+
+class VolatilityBreakoutStrategy(StrategyBase):
+    name = "volatility_breakout"
+
+    def evaluate(self, symbol: str, market_data: dict) -> StrategyResult:
+        volatility = float(market_data.get("volatility", 0.0))
+        confidence = float(market_data.get("confidence", 0.0))
+        trend = market_data.get("trend", "neutral")
+
+        if volatility > 0 and trend != "neutral":
+            direction = "buy" if trend == "bullish" else "sell"
+            return StrategyResult(
+                strategy_name=self.name,
+                symbol=symbol,
+                score=0.65 + min(confidence, 0.8),
+                direction=direction,
+                confidence=confidence,
+                rationale="Volatility expansion supports a directional breakout.",
+            )
+        return StrategyResult(
+            strategy_name=self.name,
+            symbol=symbol,
+            score=0.18,
+            direction="hold",
+            confidence=confidence,
+            rationale="Breakout conditions are not present.",
+        )
+
+
+class StrategyCompetitionEngine:
+    def __init__(self, strategies: Iterable[StrategyBase] | None = None):
+        self.strategies = list(strategies or [TrendFollowerStrategy(), MeanReversionStrategy(), VolatilityBreakoutStrategy()])
+
+    def run(self, symbol: str, market_data: dict) -> list[StrategyResult]:
+        results = [strategy.evaluate(symbol, market_data) for strategy in self.strategies]
+        return sorted(results, key=lambda item: item.score, reverse=True)
