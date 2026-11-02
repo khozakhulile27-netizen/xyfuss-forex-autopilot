@@ -18,3 +18,11 @@ class EvidenceVerifier:
         passed = final_score >= threshold
         reason = "Evidence supports trade execution." if passed else "Evidence is insufficient or inconsistent."
         return {"passed": passed, "score": round(final_score, 4), "reason": reason}
+
+
+class RecommendationEngine:
+    """Rank trade ideas by direction, confidence, and supporting evidence."""
+
+    def rank(self, ideas: Iterable[dict]) -> list[dict]:
+        ranked = sorted((dict(idea) for idea in ideas), key=lambda idea: float(idea.get("confidence", 0.0)), reverse=True)
+        return ranked

@@ -1,24 +1,18 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from xyfuss_forex_autopilot.brokers import (
+    BrokerCapabilities,
+    BrokerOrder,
+    DirectBrokerAdapter,
+    MT5Adapter,
+    CTraderAdapter,
+)
 
 
-class BrokerAdapter(ABC):
-    """Abstract broker adapter framework. Live trading is disabled by default."""
+class BrokerAdapter:
+    """Compatibility base for older monitoring imports."""
 
-    name: str = "base"
-
-    @abstractmethod
-    def connect(self) -> bool:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_account_info(self) -> dict:
-        raise NotImplementedError
-
-    @abstractmethod
-    def place_order(self, symbol: str, direction: str, lot_size: float, price: float) -> dict:
-        raise NotImplementedError
+    name = "base"
 
 
 class PaperBrokerAdapter(BrokerAdapter):
@@ -39,3 +33,23 @@ class PaperBrokerAdapter(BrokerAdapter):
             "price": price,
             "confirmation": "No real broker confirmation generated.",
         }
+
+    def get_positions(self) -> list[dict]:
+        return []
+
+
+def connect_broker_safely(adapter: BrokerAdapter) -> dict:
+    try:
+        connected = bool(adapter.connect())
+    except Exception as exc:
+        return {"connected": False, "reason": f"Broker connection failed: {type(exc).__name__}"}
+    return {"connected": connected, "reason": "Connected." if connected else "Broker connection was rejected."}
+
+
+def place_paper_order_safely(adapter: BrokerAdapter, *args, **kwargs) -> dict:
+    if adapter.name != "paper":
+        return {"status": "rejected", "reason": "Live execution is disabled."}
+    connection = connect_broker_safely(adapter)
+    if not connection["connected"]:
+        return {"status": "rejected", "reason": connection["reason"]}
+    return adapter.place_order(*args, **kwargs)

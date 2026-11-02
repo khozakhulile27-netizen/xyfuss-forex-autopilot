@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from xyfuss_forex_autopilot.scheduler import DashboardServer
+
 
 @dataclass
 class TradeOutcome:

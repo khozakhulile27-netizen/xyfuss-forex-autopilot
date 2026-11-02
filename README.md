@@ -73,6 +73,10 @@ pip install -r requirements.txt
 python -m xyfuss_forex_autopilot --help
 ```
 
+## Windows MetaTrader 5 deployment
+
+Windows deployment requires the MetaTrader 5 desktop terminal and the existing demo-only MT5 adapter. See [WINDOWS_MT5_SETUP.md](WINDOWS_MT5_SETUP.md) for installation, secure environment variables, dependency checks, and the no-order demo procedure.
+
 ## Commands
 ```bash
 python -m xyfuss_forex_autopilot status

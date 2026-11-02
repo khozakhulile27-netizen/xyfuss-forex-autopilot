@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from xyfuss_forex_autopilot.models import StrategyResult
+from xyfuss_forex_autopilot.recommendations import EvidenceVerifier
 
 
 class StrategyBase:

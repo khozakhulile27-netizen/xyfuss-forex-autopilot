@@ -1,28 +1,42 @@
 from __future__ import annotations
 
-import threading
-import time
-from typing import Callable
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+from threading import Lock
+from typing import Any
 
 
-class AutonomousScheduler:
-    """Runs a periodic autonomous cycle in a background thread."""
+class AuditReporter:
+    """Keep an in-memory, append-only audit trail for risk decisions."""
 
-    def __init__(self, interval_seconds: int = 300, callback: Callable[[], None] | None = None):
-        self.interval_seconds = interval_seconds
-        self.callback = callback or (lambda: None)
-        self._thread = None
-        self._stop_event = threading.Event()
+    def __init__(self, ledger_path: str | Path | None = None):
+        self.records: list[dict[str, Any]] = []
+        self._lock = Lock()
+        self.ledger_path = Path(ledger_path) if ledger_path else None
+        if self.ledger_path:
+            self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def start(self):
-        self._thread = threading.Thread(target=self._run_loop, daemon=True)
-        self._thread.start()
-        return self
+    def record(self, event: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            "details": details or {},
+        }
+        with self._lock:
+            self.records.append(record)
+            if self.ledger_path:
+                line = json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
+                with self.ledger_path.open("a", encoding="utf-8") as handle:
+                    handle.write(line)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+        return record
 
-    def _run_loop(self):
-        while not self._stop_event.is_set():
-            self.callback()
-            time.sleep(self.interval_seconds)
+    def list_records(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return [record.copy() for record in self.records]
 
-    def stop(self):
-        self._stop_event.set()
+    def report(self) -> list[dict[str, Any]]:
+        return self.list_records()

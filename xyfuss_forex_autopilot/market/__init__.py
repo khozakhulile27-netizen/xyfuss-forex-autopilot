@@ -79,6 +79,29 @@ class MarketInvestigator:
             "previous_close": previous["close"],
         }
 
+    def validate_freshness(self, candles: Iterable[dict], max_age_seconds: float = 300.0, now: datetime | None = None) -> dict:
+        bars = list(candles)
+        if not bars:
+            return {"fresh": False, "reason": "No market data is available."}
+        raw_timestamp = bars[-1].get("timestamp")
+        if raw_timestamp is None:
+            return {"fresh": False, "reason": "Latest candle has no timestamp."}
+        try:
+            timestamp = raw_timestamp
+            if isinstance(timestamp, str):
+                timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            return {"fresh": False, "reason": "Latest candle timestamp is invalid."}
+        current = now or datetime.now(timezone.utc)
+        age_seconds = (current.astimezone(timezone.utc) - timestamp.astimezone(timezone.utc)).total_seconds()
+        if age_seconds < 0:
+            return {"fresh": False, "reason": "Latest candle timestamp is in the future."}
+        if age_seconds > max_age_seconds:
+            return {"fresh": False, "reason": "Market data is stale.", "age_seconds": age_seconds}
+        return {"fresh": True, "reason": "Market data is current.", "age_seconds": age_seconds}
+
 
 class HistoricalTradeInvestigator:
     """Analyze historical wins and losses to find recurring patterns."""

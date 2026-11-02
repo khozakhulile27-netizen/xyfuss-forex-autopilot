@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import os
 
 
 @dataclass
@@ -22,26 +23,37 @@ class Settings:
     server_host: str = "0.0.0.0"
     server_port: int = 8000
     scheduler_interval_seconds: int = 300
+    dashboard_access_token: str = ""
+    profit_allocation_ledger: str = "data/profit_allocation.jsonl"
+    trading_state_path: str = "data/trading-state.json"
+    broker_adapter: str = "paper"
+    broker_credentials: dict[str, str] = field(default_factory=dict)
+    dashboard_password_hash: str = ""
+    mt5_demo_credentials_file: str = "data/credentials/mt5-demo.json"
 
 
 def load_settings(path: str | None = None) -> Settings:
     settings = Settings()
-    if not path:
-        return settings
+    if path:
+        config_file = Path(path)
+        if config_file.exists():
+            try:
+                import yaml  # type: ignore
+            except ImportError:
+                raw = {}
+            else:
+                with config_file.open("r", encoding="utf-8") as handle:
+                    raw = yaml.safe_load(handle) or {}
+            for key, value in raw.items():
+                if hasattr(settings, key):
+                    setattr(settings, key, value)
 
-    config_file = Path(path)
-    if not config_file.exists():
-        return settings
-
-    try:
-        import yaml  # type: ignore
-    except ImportError:
-        return settings
-
-    with config_file.open("r", encoding="utf-8") as handle:
-        raw = yaml.safe_load(handle) or {}
-
-    for key, value in raw.items():
-        if hasattr(settings, key):
-            setattr(settings, key, value)
+    environment_live_flag = os.getenv("XYFUSS_LIVE_TRADING_ENABLED", "").strip().lower() in {"1", "true", "yes"}
+    human_approval = os.getenv("XYFUSS_LIVE_TRADING_APPROVAL", "") == "I_UNDERSTAND_LIVE_TRADING"
+    settings.dashboard_access_token = os.getenv("XYFUSS_DASHBOARD_ACCESS_TOKEN", settings.dashboard_access_token)
+    settings.live_trading_enabled = bool(settings.live_trading_enabled and environment_live_flag and human_approval)
+    if settings.live_trading_enabled:
+        settings.trading_mode = "live"
+    else:
+        settings.trading_mode = "paper"
     return settings

@@ -19,3 +19,17 @@ log_level: INFO
 server_host: 0.0.0.0
 server_port: 8000
 scheduler_interval_seconds: 300
+dashboard_access_token: ""
+profit_allocation_ledger: data/profit_allocation.jsonl
+trading_state_path: data/trading-state.json
+broker_adapter: paper
+# Broker credentials are read only from GitHub Codespaces/environment secrets.
+# MT5_DEMO_LOGIN=<demo-account-login>
+# MT5_DEMO_PASSWORD=<demo-password>
+# MT5_DEMO_SERVER=<demo-server-name>
+# CTRADER_DEMO_CLIENT_ID, CTRADER_DEMO_CLIENT_SECRET,
+# CTRADER_DEMO_ACCESS_TOKEN, CTRADER_DEMO_ACCOUNT_ID
+# Live trading requires both:
+# XYFUSS_LIVE_TRADING_ENABLED=true
+# XYFUSS_LIVE_TRADING_APPROVAL=I_UNDERSTAND_LIVE_TRADING
+dashboard_password_hash: ""

@@ -1,0 +1,17 @@
+[Unit]
+Description=XYFUSS Forex Autopilot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/xyfuss
+ExecStart=/opt/xyfuss/.venv/bin/python -m xyfuss_forex_autopilot dashboard --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/xyfuss/data
+
+[Install]
+WantedBy=multi-user.target

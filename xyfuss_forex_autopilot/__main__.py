@@ -1,5 +1,7 @@
-"""XYFUSS Forex Autopilot package."""
+"""Command-line entry point for XYFUSS Forex Autopilot."""
 
-from xyfuss_forex_autopilot.core import XyFussForexAutopilot
+from xyfuss_forex_autopilot.cli import main
 
-__all__ = ["XyFussForexAutopilot"]
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -10,7 +10,20 @@ venv/
 # Secrets and config
 .env
 .env.*
+!.env.example
 config.local.yaml
+config.yaml
+*.yaml.backup
+*.yml.backup
+*.credentials
+*.credential
+data/
+backups/
+credentials/
+credential*/
+*credentials*.json
+*.key
+*.pem
 
 # Test / coverage
 .pytest_cache/
