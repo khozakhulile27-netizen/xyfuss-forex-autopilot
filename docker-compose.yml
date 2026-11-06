@@ -9,6 +9,7 @@ services:
     environment:
       XYFUSS_DASHBOARD_ACCESS_TOKEN: ${XYFUSS_DASHBOARD_ACCESS_TOKEN}
       XYFUSS_LIVE_TRADING_ENABLED: "false"
+      XYFUSS_DEMO_EXECUTION_ENABLED: "false"
 
 volumes:
   xyfuss-data:
