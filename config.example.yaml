@@ -1,6 +1,7 @@
 project_name: xyfuss-forex-autopilot
 trading_mode: paper
 live_trading_enabled: false
+demo_execution_enabled: false
 default_currency: USD
 max_daily_risk_pct: 1.5
 max_position_risk_pct: 0.5
@@ -29,6 +30,8 @@ broker_adapter: paper
 # MT5_DEMO_SERVER=<demo-server-name>
 # CTRADER_DEMO_CLIENT_ID, CTRADER_DEMO_CLIENT_SECRET,
 # CTRADER_DEMO_ACCESS_TOKEN, CTRADER_DEMO_ACCOUNT_ID
+# Demo order execution requires demo_execution_enabled: true AND XYFUSS_DEMO_EXECUTION_ENABLED=true.
+# Keep XYFUSS_LIVE_TRADING_ENABLED=false for demo use.
 # Live trading requires both:
 # XYFUSS_LIVE_TRADING_ENABLED=true
 # XYFUSS_LIVE_TRADING_APPROVAL=I_UNDERSTAND_LIVE_TRADING
