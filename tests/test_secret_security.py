@@ -55,7 +55,7 @@ def test_live_trading_requires_environment_approval(monkeypatch, tmp_path):
 
 def test_demo_execution_requires_config_and_environment_opt_in(monkeypatch, tmp_path):
     config = tmp_path / "config.yaml"
-    config.write_text("demo_execution_enabled: true\\n", encoding="utf-8")
+    config.write_text("demo_execution_enabled: true\n", encoding="utf-8")
     monkeypatch.delenv("XYFUSS_LIVE_TRADING_ENABLED", raising=False)
     monkeypatch.delenv("XYFUSS_LIVE_TRADING_APPROVAL", raising=False)
     monkeypatch.delenv("XYFUSS_DEMO_EXECUTION_ENABLED", raising=False)
@@ -66,7 +66,7 @@ def test_demo_execution_requires_config_and_environment_opt_in(monkeypatch, tmp_
 
 def test_demo_execution_is_blocked_when_live_mode_is_approved(monkeypatch, tmp_path):
     config = tmp_path / "config.yaml"
-    config.write_text("live_trading_enabled: true\\ndemo_execution_enabled: true\\n", encoding="utf-8")
+    config.write_text("live_trading_enabled: true\ndemo_execution_enabled: true\n", encoding="utf-8")
     monkeypatch.setenv("XYFUSS_LIVE_TRADING_ENABLED", "true")
     monkeypatch.setenv("XYFUSS_LIVE_TRADING_APPROVAL", "I_UNDERSTAND_LIVE_TRADING")
     monkeypatch.setenv("XYFUSS_DEMO_EXECUTION_ENABLED", "true")
