@@ -53,6 +53,28 @@ def test_live_trading_requires_environment_approval(monkeypatch, tmp_path):
     assert settings.live_trading_enabled is False
 
 
+def test_demo_execution_requires_config_and_environment_opt_in(monkeypatch, tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text("demo_execution_enabled: true\\n", encoding="utf-8")
+    monkeypatch.delenv("XYFUSS_LIVE_TRADING_ENABLED", raising=False)
+    monkeypatch.delenv("XYFUSS_LIVE_TRADING_APPROVAL", raising=False)
+    monkeypatch.delenv("XYFUSS_DEMO_EXECUTION_ENABLED", raising=False)
+    assert load_settings(str(config)).demo_execution_enabled is False
+    monkeypatch.setenv("XYFUSS_DEMO_EXECUTION_ENABLED", "true")
+    assert load_settings(str(config)).demo_execution_enabled is True
+
+
+def test_demo_execution_is_blocked_when_live_mode_is_approved(monkeypatch, tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text("live_trading_enabled: true\\ndemo_execution_enabled: true\\n", encoding="utf-8")
+    monkeypatch.setenv("XYFUSS_LIVE_TRADING_ENABLED", "true")
+    monkeypatch.setenv("XYFUSS_LIVE_TRADING_APPROVAL", "I_UNDERSTAND_LIVE_TRADING")
+    monkeypatch.setenv("XYFUSS_DEMO_EXECUTION_ENABLED", "true")
+    settings = load_settings(str(config))
+    assert settings.live_trading_enabled is True
+    assert settings.demo_execution_enabled is False
+
+
 def test_explicit_live_trading_approval_is_required(monkeypatch, tmp_path):
     config = tmp_path / "config.yaml"
     config.write_text("trading_mode: live\nlive_trading_enabled: true\n", encoding="utf-8")
