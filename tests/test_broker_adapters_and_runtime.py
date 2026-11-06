@@ -109,7 +109,8 @@ class MT5DemoBackend:
 def demo_mt5_adapter(execution=True):
     return MetaTrader5DemoAdapter(
         credentials={"login": "123456", "password": "demo-password", "server": "Exness-MT5Demo1", "environment": "demo"},
-        live_trading_enabled=execution,
+        live_trading_enabled=False,
+        demo_execution_enabled=execution,
         backend=MT5DemoBackend(),
     )
 
@@ -143,7 +144,7 @@ def test_mt5_demo_requires_sl_tp_and_rejects_real_server():
 
     real_money = MetaTrader5DemoAdapter(
         credentials={"login": "123456", "password": "secret", "server": "Exness-Real1", "environment": "demo"},
-        live_trading_enabled=True,
+        live_trading_enabled=False,
         backend=MT5DemoBackend(),
     )
     assert real_money.validate_credentials() is False
@@ -166,7 +167,7 @@ def test_exness_trial_server_health_reconnect_and_read_only_mode():
     assert adapter.health_check()["healthy"] is True
     assert adapter.reconnect() is True
     assert adapter.health_check()["healthy"] is True
-    with pytest.raises(RuntimeError, match="disabled until live_trading_enabled"):
+    with pytest.raises(RuntimeError, match="Demo order execution is disabled"):
         adapter.place_order("EUR/USD", "buy", 0.01, 1.0992, 1.09, 1.11)
 
 
@@ -253,7 +254,23 @@ def demo_adapter():
         "access_token": "demo-token",
         "ctid_trader_account_id": "123",
     }
-    return CTraderDemoAdapter(credentials=credentials, backend=DemoBackend())
+    return CTraderDemoAdapter(credentials=credentials, demo_execution_enabled=True, backend=DemoBackend())
+
+
+def test_ctrader_demo_execution_is_disabled_by_default():
+    credentials = {"client_id": "demo-app", "client_secret": "demo-secret", "access_token": "demo-token", "ctid_trader_account_id": "123"}
+    adapter = CTraderDemoAdapter(credentials=credentials, backend=DemoBackend())
+    with pytest.raises(CTraderIntegrationError, match="Demo order execution is disabled"):
+        adapter.place_order("EURUSD", "buy", 0.01, 1.1, client_order_id="blocked", symbol_id=1)
+    assert adapter.backend.orders == []
+
+
+def test_ctrader_demo_execution_is_blocked_in_live_mode():
+    credentials = {"client_id": "demo-app", "client_secret": "demo-secret", "access_token": "demo-token", "ctid_trader_account_id": "123"}
+    adapter = CTraderDemoAdapter(credentials=credentials, live_trading_enabled=True, demo_execution_enabled=True, backend=DemoBackend())
+    with pytest.raises(CTraderIntegrationError, match="Demo order execution is disabled"):
+        adapter.place_order("EURUSD", "buy", 0.01, 1.1, client_order_id="blocked", symbol_id=1)
+    assert adapter.backend.orders == []
 
 
 def test_ctrader_demo_connection_market_account_and_positions():

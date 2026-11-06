@@ -155,9 +155,10 @@ class CTraderDemoAdapter(LiveAdapterBase):
         self,
         credentials: Mapping[str, object] | None = None,
         live_trading_enabled: bool = False,
+        demo_execution_enabled: bool = False,
         backend=None,
     ):
-        super().__init__(credentials=credentials, live_trading_enabled=live_trading_enabled)
+        super().__init__(credentials=credentials, live_trading_enabled=live_trading_enabled, demo_execution_enabled=demo_execution_enabled)
         self.backend = backend
         self.order_gate = IdempotentOrderGate()
         self._emergency_stop = False
@@ -209,8 +210,8 @@ class CTraderDemoAdapter(LiveAdapterBase):
         client_order_id: str | None = None,
         symbol_id: int | None = None,
     ) -> dict:
-        if self.live_trading_enabled or self._emergency_stop:
-            raise CTraderIntegrationError("Demo execution is disabled while emergency stop is active or live mode is requested.")
+        if self.live_trading_enabled or not self.demo_execution_enabled or self._emergency_stop:
+            raise CTraderIntegrationError("Demo order execution is disabled, live mode is requested, or emergency stop is active.")
         if not self.connect() or self.backend is None:
             raise CTraderIntegrationError("cTrader demo connection is unavailable.")
         if direction.lower() not in {"buy", "sell"}:

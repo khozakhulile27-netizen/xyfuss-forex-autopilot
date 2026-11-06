@@ -6,6 +6,9 @@ Generated: 2026-11-02
 
 - Default configuration is `paper`.
 - `live_trading_enabled` is forced to false unless both `XYFUSS_LIVE_TRADING_ENABLED` and the exact human approval value `I_UNDERSTAND_LIVE_TRADING` are supplied in the environment.
+- Demo order placement has a separate `demo_execution_enabled` setting and requires `XYFUSS_DEMO_EXECUTION_ENABLED=true` as an additional environment opt-in.
+- Both MT5 and cTrader demo adapters reject order placement by default and reject demo order placement when live mode is enabled.
+- MT5 and cTrader demo connections may still be used for read-only account/market verification while demo order execution remains disabled.
 - No live-money order path is claimed as verified.
 
 ## Credential handling
@@ -51,5 +54,6 @@ Requires attention before staging:
 
 ## Validation
 
-- Existing and added tests pass at the repository level.
+- A GitHub Actions Python test workflow now runs compile checks and the test suite on supported Python versions for pushes to `main` and `fix/**` branches and pull requests to `main`.
+- The new workflow has not yet completed for this branch; test success is not claimed until GitHub Actions reports a passing run.
 - Live broker authentication, market execution, and order placement require separate real demo-environment credentials and evidence and are not claimed complete in this report without execution.
