@@ -15,7 +15,7 @@ MetaTrader 5 exposes account balance and equity through its official `account_in
 The current default risk profile uses:
 - Daily loss stop: 1.5% of the supplied account balance.
 - Maximum drawdown stop: 10% of the supplied account balance.
-- Daily loss is measured from the first equity snapshot recorded for the current UTC date.
+- At a UTC date change, daily loss is measured from the last equity snapshot recorded before the boundary. This conservatively counts any equity gap while the process was offline.
 - Drawdown is measured from the persisted all-time equity high-water mark.
 
 The thresholds are configurable through the existing `RiskProfile`. They are protective limits, not a guarantee against losses or execution slippage.
