@@ -99,8 +99,10 @@ class PersistentTradingState:
                 })
             else:
                 if risk.get("day") != day:
+                    # Carry the last observed equity forward as the day boundary
+                    # baseline so a gap while the process was offline is not hidden.
+                    risk["day_start_equity"] = float(risk.get("last_equity", value))
                     risk["day"] = day
-                    risk["day_start_equity"] = value
                 peak = float(risk.get("peak_equity", value))
                 risk["peak_equity"] = max(peak, value)
                 risk["last_equity"] = value
