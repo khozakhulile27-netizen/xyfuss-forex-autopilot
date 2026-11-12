@@ -100,3 +100,14 @@ def test_manual_emergency_stop_survives_autopilot_restart(tmp_path):
 
     assert result["decision"] == "NO_TRADE"
     assert "manual review" in result["reason"]
+
+
+def test_autopilot_blocks_when_persisted_state_is_corrupt(tmp_path):
+    state_path = tmp_path / "trading-state.json"
+    state_path.write_text("broken", encoding="utf-8")
+
+    autopilot = XyFussForexAutopilot({"trading_state_path": str(state_path)})
+    result = autopilot.decide_trade("EUR/USD", [], balance=10000.0)
+
+    assert result["decision"] == "NO_TRADE"
+    assert "manual review" in result["reason"]
