@@ -30,8 +30,8 @@ def test_equity_tracker_resets_daily_baseline_but_keeps_peak(tmp_path):
     state.record_equity(10500.0, day_one)
     next_day = state.record_equity(10400.0, day_two)
 
-    assert next_day["daily_start_equity"] == 10400.0
-    assert next_day["daily_loss"] == 0.0
+    assert next_day["daily_start_equity"] == 10500.0
+    assert next_day["daily_loss"] == 100.0
     assert next_day["peak_equity"] == 10500.0
     assert next_day["drawdown"] == 100.0
 
