@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from math import isfinite
+
 from xyfuss_forex_autopilot.audit import AuditReporter
 from xyfuss_forex_autopilot.paper_trading import Backtester, PaperTradingEngine
 from xyfuss_forex_autopilot.brokers import PaperBrokerAdapter
