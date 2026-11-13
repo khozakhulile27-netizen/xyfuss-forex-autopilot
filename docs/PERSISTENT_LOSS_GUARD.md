@@ -10,6 +10,8 @@ The persistent loss guard prevents new Autopilot trade decisions after the confi
 
 MetaTrader 5 exposes account balance and equity through its official `account_info()` result. The account snapshot must be obtained from the connected terminal and passed into the decision layer by a separately verified integration.
 
+For a read-only integration, call `decide_trade_from_broker(symbol, candles, broker_adapter)`. The adapter must return a connected account snapshot containing both `balance` and `equity`. A disconnected, incomplete, or invalid snapshot activates the persistent emergency stop. This method never submits or closes broker orders; the strategy decision pipeline remains paper-only.
+
 ## Thresholds
 
 The current default risk profile uses:
