@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from math import isfinite
+
 from xyfuss_forex_autopilot.audit import AuditReporter
 from xyfuss_forex_autopilot.paper_trading import Backtester, PaperTradingEngine
 from xyfuss_forex_autopilot.brokers import PaperBrokerAdapter
@@ -13,6 +15,7 @@ from xyfuss_forex_autopilot.risk import RiskManager, StopLossEngine
 from xyfuss_forex_autopilot.scheduler import AutonomousScheduler
 from xyfuss_forex_autopilot.strategies import StrategyCompetitionEngine
 from xyfuss_forex_autopilot.profit_allocation import ProfitAllocationManager
+from xyfuss_forex_autopilot.runtime import PersistentTradingState
 
 
 class XyFussForexAutopilot:
@@ -38,7 +41,13 @@ class XyFussForexAutopilot:
         self.profit_allocation = ProfitAllocationManager(
             ledger_path=self.settings.get("profit_allocation_ledger", "data/profit_allocation.jsonl"),
         )
-        self.emergency_stop = False
+        self.trading_state = PersistentTradingState(
+            self.settings.get("trading_state_path", "data/trading-state.json"),
+        )
+        persisted_state = self.trading_state.load()
+        self.emergency_stop = bool(
+            persisted_state.get("emergency_stop") or persisted_state.get("recovery_warning")
+        )
         self.dashboard = DashboardServer(
             host=self.settings.get("server_host", "0.0.0.0"),
             port=self.settings.get("server_port", 8000),
@@ -68,11 +77,40 @@ class XyFussForexAutopilot:
             ideas.append(idea)
         return self.recommendation_engine.rank(ideas)
 
-    def decide_trade(self, symbol: str, candles: list[dict], balance: float = 10000.0, max_risk_pct: float = 0.5) -> dict:
+    def decide_trade(
+        self,
+        symbol: str,
+        candles: list[dict],
+        balance: float = 10000.0,
+        max_risk_pct: float = 0.5,
+        equity: float | None = None,
+    ) -> dict:
         if self.settings.get("live_trading_enabled", False) or self.settings.get("trading_mode", "paper") != "paper":
             return {"decision": "NO_TRADE", "reason": "Live execution is disabled; only the paper-trading engine may execute orders.", "market": {}}
-        if self.emergency_stop:
-            return {"decision": "NO_TRADE", "reason": "Emergency stop is active.", "market": {}}
+
+        persisted_state = self.trading_state.load()
+        if self.emergency_stop or persisted_state.get("emergency_stop") or persisted_state.get("recovery_warning"):
+            self.emergency_stop = True
+            return {"decision": "NO_TRADE", "reason": "Persistent emergency stop is active; manual review is required before reset.", "market": {}}
+
+        try:
+            risk_balance = float(balance)
+            current_equity = float(equity if equity is not None else balance)
+            if not isfinite(risk_balance) or risk_balance <= 0:
+                raise ValueError("Account balance must be finite and positive.")
+            risk_snapshot = self.trading_state.record_equity(current_equity)
+        except (TypeError, ValueError, RuntimeError, OSError) as exc:
+            self.activate_emergency_stop()
+            return {"decision": "NO_TRADE", "reason": f"Account risk state unavailable; emergency stop activated ({type(exc).__name__}).", "market": {}}
+
+        daily_loss_limit = risk_balance * self.risk_manager.profile.daily_risk_limit_pct / 100.0
+        drawdown_limit = risk_balance * self.risk_manager.profile.max_drawdown_pct / 100.0
+        if risk_snapshot["daily_loss"] >= daily_loss_limit:
+            self.activate_emergency_stop()
+            return {"decision": "NO_TRADE", "reason": "Daily loss limit reached; persistent emergency stop activated.", "market": {"risk": risk_snapshot}}
+        if risk_snapshot["drawdown"] >= drawdown_limit:
+            self.activate_emergency_stop()
+            return {"decision": "NO_TRADE", "reason": "Maximum account drawdown reached; persistent emergency stop activated.", "market": {"risk": risk_snapshot}}
         freshness = self.market_investigator.validate_freshness(candles)
         if not freshness["fresh"]:
             return {"decision": "NO_TRADE", "reason": freshness["reason"], "market": {"freshness": freshness}}
@@ -106,8 +144,8 @@ class XyFussForexAutopilot:
             balance=balance,
             stop_distance_pct=stop_distance / entry_price,
             recommendation_score=recommendation_score,
-            daily_loss_so_far=0.0,
-            drawdown_so_far=0.0,
+            daily_loss_so_far=risk_snapshot["daily_loss"],
+            drawdown_so_far=risk_snapshot["drawdown"],
             open_positions=[trade.__dict__ for trade in self.paper_trading.trades if trade.status == "open"],
             risk_pct=max_risk_pct,
             new_symbol=symbol,
@@ -143,6 +181,61 @@ class XyFussForexAutopilot:
         self.audit.record("trade_opened", {"trade_id": trade_id, "symbol": symbol, "direction": best.direction, "stop_loss": stop_plan["stop_loss"], "take_profit": take_profit, "atr": stop_plan["atr"], "spread": spread, "slippage": slippage, "mode": "paper"})
         return {"decision": "TRADE_ALLOWED", "trade_id": trade_id, "trade": trade, "market": market_data, "risk": risk_assessment}
 
+    def decide_trade_from_broker(
+        self,
+        symbol: str,
+        candles: list[dict],
+        broker_adapter,
+        max_risk_pct: float = 0.5,
+    ) -> dict:
+        """Use a fresh, read-only broker account snapshot for the persistent risk guard.
+
+        This method never submits, modifies, or closes broker orders. It only
+        reads account balance/equity, then delegates to the paper-only decision
+        pipeline. Any missing or disconnected account snapshot fails closed.
+        """
+        persisted_state = self.trading_state.load()
+        if self.emergency_stop or persisted_state.get("emergency_stop") or persisted_state.get("recovery_warning"):
+            self.emergency_stop = True
+            return {
+                "decision": "NO_TRADE",
+                "reason": "Persistent emergency stop is active; broker monitoring is blocked pending manual review.",
+                "market": {},
+            }
+
+        try:
+            account = broker_adapter.get_account_info()
+            if not isinstance(account, dict) or account.get("connected") is not True:
+                raise RuntimeError("Broker account connection is not verified.")
+            if account.get("balance") is None or account.get("equity") is None:
+                raise ValueError("Broker account snapshot must include balance and equity.")
+
+            result = self.decide_trade(
+                symbol,
+                candles,
+                balance=account["balance"],
+                max_risk_pct=max_risk_pct,
+                equity=account["equity"],
+            )
+            result["account_monitoring"] = {
+                "source": "broker_read_only",
+                "connected": True,
+                "currency": account.get("currency"),
+                "equity_checked": True,
+            }
+            return result
+        except Exception as exc:
+            try:
+                self.activate_emergency_stop()
+            except Exception:
+                self.emergency_stop = True
+            return {
+                "decision": "NO_TRADE",
+                "reason": f"Broker account snapshot unavailable; emergency stop activated ({type(exc).__name__}).",
+                "market": {},
+                "account_monitoring": {"source": "broker_read_only", "connected": False},
+            }
+
     def run_backtest(self, trades: list[dict]) -> dict:
         return self.backtester.run(trades)
 
@@ -163,8 +256,9 @@ class XyFussForexAutopilot:
 
     def activate_emergency_stop(self) -> dict:
         self.emergency_stop = True
-        self.audit.record("emergency_stop", {"status": "active"})
-        return {"status": "stopped", "live_trading_enabled": False}
+        self.trading_state.set_emergency_stop(True)
+        self.audit.record("emergency_stop", {"status": "active", "persistence": "saved"})
+        return {"status": "stopped", "live_trading_enabled": False, "persistent": True}
 
     def run_scheduler(self, interval_seconds: int | None = None):
         self.scheduler = AutonomousScheduler(
