@@ -181,6 +181,61 @@ class XyFussForexAutopilot:
         self.audit.record("trade_opened", {"trade_id": trade_id, "symbol": symbol, "direction": best.direction, "stop_loss": stop_plan["stop_loss"], "take_profit": take_profit, "atr": stop_plan["atr"], "spread": spread, "slippage": slippage, "mode": "paper"})
         return {"decision": "TRADE_ALLOWED", "trade_id": trade_id, "trade": trade, "market": market_data, "risk": risk_assessment}
 
+    def decide_trade_from_broker(
+        self,
+        symbol: str,
+        candles: list[dict],
+        broker_adapter,
+        max_risk_pct: float = 0.5,
+    ) -> dict:
+        """Use a fresh, read-only broker account snapshot for the persistent risk guard.
+
+        This method never submits, modifies, or closes broker orders. It only
+        reads account balance/equity, then delegates to the paper-only decision
+        pipeline. Any missing or disconnected account snapshot fails closed.
+        """
+        persisted_state = self.trading_state.load()
+        if self.emergency_stop or persisted_state.get("emergency_stop") or persisted_state.get("recovery_warning"):
+            self.emergency_stop = True
+            return {
+                "decision": "NO_TRADE",
+                "reason": "Persistent emergency stop is active; broker monitoring is blocked pending manual review.",
+                "market": {},
+            }
+
+        try:
+            account = broker_adapter.get_account_info()
+            if not isinstance(account, dict) or account.get("connected") is not True:
+                raise RuntimeError("Broker account connection is not verified.")
+            if account.get("balance") is None or account.get("equity") is None:
+                raise ValueError("Broker account snapshot must include balance and equity.")
+
+            result = self.decide_trade(
+                symbol,
+                candles,
+                balance=account["balance"],
+                max_risk_pct=max_risk_pct,
+                equity=account["equity"],
+            )
+            result["account_monitoring"] = {
+                "source": "broker_read_only",
+                "connected": True,
+                "currency": account.get("currency"),
+                "equity_checked": True,
+            }
+            return result
+        except Exception as exc:
+            try:
+                self.activate_emergency_stop()
+            except Exception:
+                self.emergency_stop = True
+            return {
+                "decision": "NO_TRADE",
+                "reason": f"Broker account snapshot unavailable; emergency stop activated ({type(exc).__name__}).",
+                "market": {},
+                "account_monitoring": {"source": "broker_read_only", "connected": False},
+            }
+
     def run_backtest(self, trades: list[dict]) -> dict:
         return self.backtester.run(trades)
 
