@@ -82,8 +82,9 @@ def test_maximum_drawdown_persistently_stops_new_trades(tmp_path):
     autopilot = XyFussForexAutopilot({"trading_state_path": state_path})
 
     autopilot.decide_trade("EUR/USD", [], balance=10000.0, equity=10000.0)
-    autopilot.decide_trade("EUR/USD", [], balance=10000.0, equity=11000.0)
-    result = autopilot.decide_trade("EUR/USD", [], balance=10000.0, equity=8900.0)
+    autopilot.decide_trade("EUR/USD", [], balance=10000.0, equity=12000.0)
+    # Equity remains above the daily starting value, isolating peak drawdown.
+    result = autopilot.decide_trade("EUR/USD", [], balance=10000.0, equity=10900.0)
 
     assert result["decision"] == "NO_TRADE"
     assert "drawdown" in result["reason"].lower()
