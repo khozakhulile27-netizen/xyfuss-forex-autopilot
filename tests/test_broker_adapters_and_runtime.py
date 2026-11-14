@@ -308,7 +308,7 @@ def test_ctrader_demo_order_rejection_sl_tp_duplicate_and_shutdown():
 
     with pytest.raises(CTraderIntegrationError, match="symbol rejected"):
         adapter.place_order(
-            "BAD", "buy", 0.01, 1.1, client_order_id="order-2", symbol_id=999
+            "BAD", "buy", 0.01, 1.1, 1.09, 1.12, client_order_id="order-2", symbol_id=999
         )
 
     adapter.emergency_stop()
