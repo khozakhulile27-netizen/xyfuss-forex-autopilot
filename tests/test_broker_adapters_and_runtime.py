@@ -281,6 +281,17 @@ def test_ctrader_demo_connection_market_account_and_positions():
     assert adapter.get_positions()[0]["positionId"] == "10"
 
 
+def test_ctrader_demo_orders_require_both_protective_levels():
+    adapter = demo_adapter()
+
+    with pytest.raises(CTraderIntegrationError, match="requires stop-loss and take-profit"):
+        adapter.place_order("EURUSD", "buy", 0.01, 1.1, take_profit=1.12, client_order_id="missing-sl", symbol_id=1)
+    with pytest.raises(CTraderIntegrationError, match="requires stop-loss and take-profit"):
+        adapter.place_order("EURUSD", "buy", 0.01, 1.1, stop_loss=1.09, client_order_id="missing-tp", symbol_id=1)
+
+    assert adapter.backend.orders == []
+
+
 def test_ctrader_demo_order_rejection_sl_tp_duplicate_and_shutdown():
     adapter = demo_adapter()
     order = adapter.place_order(
