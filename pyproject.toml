@@ -12,7 +12,7 @@ authors = [{ name = "Sidney Khoza" }]
 license = { text = "MIT" }
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0.0", "PyYAML>=6.0.0"]
+dev = ["pytest>=8.0.0", "PyYAML>=6.0.0", "cryptography>=41.0.5,<43"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

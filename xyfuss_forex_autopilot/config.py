@@ -10,6 +10,7 @@ class Settings:
     project_name: str = "xyfuss-forex-autopilot"
     trading_mode: str = "paper"
     live_trading_enabled: bool = False
+    demo_execution_enabled: bool = False
     default_currency: str = "USD"
     max_daily_risk_pct: float = 1.5
     max_position_risk_pct: float = 0.5
@@ -50,8 +51,12 @@ def load_settings(path: str | None = None) -> Settings:
 
     environment_live_flag = os.getenv("XYFUSS_LIVE_TRADING_ENABLED", "").strip().lower() in {"1", "true", "yes"}
     human_approval = os.getenv("XYFUSS_LIVE_TRADING_APPROVAL", "") == "I_UNDERSTAND_LIVE_TRADING"
+    environment_demo_flag = os.getenv("XYFUSS_DEMO_EXECUTION_ENABLED", "").strip().lower() in {"1", "true", "yes"}
     settings.dashboard_access_token = os.getenv("XYFUSS_DASHBOARD_ACCESS_TOKEN", settings.dashboard_access_token)
     settings.live_trading_enabled = bool(settings.live_trading_enabled and environment_live_flag and human_approval)
+    settings.demo_execution_enabled = bool(
+        settings.demo_execution_enabled and environment_demo_flag and not settings.live_trading_enabled
+    )
     if settings.live_trading_enabled:
         settings.trading_mode = "live"
     else:
