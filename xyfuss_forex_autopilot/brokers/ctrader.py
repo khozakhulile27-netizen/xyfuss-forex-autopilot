@@ -212,6 +212,8 @@ class CTraderDemoAdapter(LiveAdapterBase):
     ) -> dict:
         if self.live_trading_enabled or not self.demo_execution_enabled or self._emergency_stop:
             raise CTraderIntegrationError("Demo order execution is disabled, live mode is requested, or emergency stop is active.")
+        if stop_loss is None or take_profit is None:
+            raise CTraderIntegrationError("Every cTrader demo order requires stop-loss and take-profit.")
         if not self.connect() or self.backend is None:
             raise CTraderIntegrationError("cTrader demo connection is unavailable.")
         if direction.lower() not in {"buy", "sell"}:
