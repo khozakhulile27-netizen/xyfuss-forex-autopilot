@@ -14,7 +14,10 @@
 - Live trading requires separate human authorization, a verified regulated broker connection, independent security review and extensive demo/forward testing. Do not store credentials in source control.
 
 ## Migration phases
-1. Establish Rust workspace and strict TypeScript contracts (this commit).
+1. Establish Rust workspace and strict TypeScript contracts (started).
+   - Implemented: deterministic pre-trade risk gate; invalid risk configuration fails closed.
+   - Implemented: independent eligibility gate; empty allowlists, untrusted/stale data, insufficient evidence, unapproved account/instrument, unvalidated strategy, closed session and active halt all block progression.
+   - Not yet verified: compilation, formatting, Clippy, and CI execution. These are explicit release blockers.
 2. Port and test market data, indicators, freshness checks and evidence verification.
 3. Port strategy competition, walk-forward backtesting, transaction costs and out-of-sample evaluation.
 4. Port portfolio sizing, correlated exposure, daily loss/drawdown limits, kill switch and durable state.
@@ -24,4 +27,4 @@
 8. Remove Python only after all required capabilities have Rust replacements, test parity is demonstrated, and the operator approves the migration. Never enable live trading as part of a code migration.
 
 ## Current status
-This is a migration foundation, not a complete or trading-ready autopilot. No market feed, profitable strategy, broker execution or live trading is implemented by this commit.
+This is a migration foundation, not a complete or trading-ready autopilot. The eligibility and risk gates are isolated decision modules, not connected to a market feed, portfolio state, or broker. No market feed, validated profitable strategy, broker execution, or live trading is implemented. CI has not yet been confirmed green; no readiness claim is permitted.
