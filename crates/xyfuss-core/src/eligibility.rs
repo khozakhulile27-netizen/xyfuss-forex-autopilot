@@ -69,18 +69,25 @@ pub fn evaluate_eligibility(
 
     if input.symbol.trim().is_empty() {
         reasons.push("missing_symbol".to_owned());
-    } else if !policy.allowed_symbols.is_empty()
-        && !policy.allowed_symbols.iter().any(|item| item.eq_ignore_ascii_case(&input.symbol))
-    {
+    } else if policy.allowed_symbols.is_empty() {
+        reasons.push("symbol_allowlist_not_configured".to_owned());
+    } else if !policy.allowed_symbols.iter().any(|item| item.eq_ignore_ascii_case(&input.symbol)) {
         reasons.push("symbol_not_allowlisted".to_owned());
     }
 
     if input.strategy_id.trim().is_empty() {
         reasons.push("missing_strategy".to_owned());
-    } else if !policy.allowed_strategies.is_empty()
-        && !policy.allowed_strategies.iter().any(|item| item == &input.strategy_id)
-    {
+    } else if policy.allowed_strategies.is_empty() {
+        reasons.push("strategy_allowlist_not_configured".to_owned());
+    } else if !policy.allowed_strategies.iter().any(|item| item == &input.strategy_id) {
         reasons.push("strategy_not_allowlisted".to_owned());
+    }
+
+    if !policy.minimum_evidence_score.is_finite()
+        || !(0.0..=1.0).contains(&policy.minimum_evidence_score)
+        || policy.minimum_verified_sources == 0
+    {
+        reasons.push("invalid_eligibility_policy".to_owned());
     }
 
     if input.data_integrity != DataIntegrity::Verified {
@@ -138,6 +145,14 @@ pub fn evaluate_eligibility(
 mod tests {
     use super::*;
 
+    fn valid_policy() -> EligibilityPolicy {
+        EligibilityPolicy {
+            allowed_symbols: vec!["EURUSD".to_owned()],
+            allowed_strategies: vec!["trend-follow-v1".to_owned()],
+            ..EligibilityPolicy::default()
+        }
+    }
+
     fn valid_input() -> EligibilityInput {
         EligibilityInput {
             symbol: "EURUSD".to_owned(),
@@ -158,9 +173,16 @@ mod tests {
     #[test]
     fn valid_candidate_only_proceeds_to_risk_assessment() {
         assert_eq!(
-            evaluate_eligibility(&valid_input(), &EligibilityPolicy::default()).decision,
+            evaluate_eligibility(&valid_input(), &valid_policy()).decision,
             EligibilityDecision::EligibleForRiskAssessment
         );
+    }
+
+    #[test]
+    fn empty_default_allowlists_fail_closed() {
+        let verdict = evaluate_eligibility(&valid_input(), &EligibilityPolicy::default());
+        assert!(verdict.reasons.contains(&"symbol_allowlist_not_configured".to_owned()));
+        assert!(verdict.reasons.contains(&"strategy_allowlist_not_configured".to_owned()));
     }
 
     #[test]
