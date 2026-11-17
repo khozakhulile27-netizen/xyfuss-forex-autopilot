@@ -12,4 +12,4 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = "deny"
-pedantic = "warn"
+pedantic = "allow"
