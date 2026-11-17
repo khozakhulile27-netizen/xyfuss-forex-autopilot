@@ -35,4 +35,15 @@ export interface AutopilotStatus {
   protection: CapitalProtectionStatus;
 }
 
+
+export type EligibilityDecision = "INELIGIBLE" | "ELIGIBLE_FOR_RISK_ASSESSMENT";
+
+export interface EligibilityStatus {
+  decision: EligibilityDecision;
+  reasons: string[];
+  symbol: string;
+  strategyId: string;
+  checkedAt: string;
+}
+
 // UI contracts only: the dashboard cannot submit or enable live orders.
