@@ -1,3 +1,5 @@
+pub mod eligibility;
+
 //! XYFUSS deterministic pre-trade safety gate.
 //! This crate does not place orders. It rejects unsafe or incomplete proposals.
 
