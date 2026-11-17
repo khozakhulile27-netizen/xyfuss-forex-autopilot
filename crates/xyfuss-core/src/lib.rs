@@ -58,6 +58,21 @@ pub struct RiskVerdict {
 
 pub fn evaluate(proposal: &TradeProposal, limits: &RiskLimits) -> RiskVerdict {
     let mut reasons = Vec::new();
+    let valid_limits = limits.max_position_risk_pct.is_finite()
+        && limits.max_position_risk_pct > 0.0
+        && limits.max_position_risk_pct <= 100.0
+        && limits.max_daily_loss_pct.is_finite()
+        && limits.max_daily_loss_pct > 0.0
+        && limits.max_daily_loss_pct <= 100.0
+        && limits.max_drawdown_pct.is_finite()
+        && limits.max_drawdown_pct > 0.0
+        && limits.max_drawdown_pct <= 100.0
+        && limits.max_spread_pct.is_finite()
+        && (0.0..=100.0).contains(&limits.max_spread_pct)
+        && limits.max_open_positions > 0;
+    if !valid_limits {
+        reasons.push("invalid_risk_configuration".into());
+    }
     let finite = [proposal.entry, proposal.stop_loss, proposal.take_profit,
         proposal.account_equity, proposal.proposed_risk_pct, proposal.spread_pct,
         proposal.daily_loss_pct, proposal.drawdown_pct, proposal.evidence_score]
@@ -125,5 +140,12 @@ mod tests {
     fn non_finite_input_is_no_trade() {
         let mut p = valid(); p.entry = f64::NAN;
         assert_eq!(evaluate(&p, &RiskLimits::default()).decision, Decision::NoTrade);
+    }
+
+    #[test]
+    fn invalid_risk_configuration_is_no_trade() {
+        let mut limits = RiskLimits::default();
+        limits.max_position_risk_pct = f64::NAN;
+        assert!(evaluate(&valid(), &limits).reasons.contains(&"invalid_risk_configuration".into()));
     }
 }
