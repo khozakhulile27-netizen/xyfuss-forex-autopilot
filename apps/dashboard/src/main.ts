@@ -107,7 +107,7 @@ function render(): void {
   const nav = navigation.map(({ page, icon }) =>
     `<button type="button" data-page="${page}" class="${page === currentPage ? "active" : ""}"><span class="nav-icon">${icon}</span>${page}</button>`
   ).join("");
-  app.innerHTML = `
+  app!.innerHTML = `
     <div class="shell">
       <aside class="sidebar">
         <div class="brand"><div class="brand-mark">X</div><div><div class="brand-name">XYFUSS</div><div class="brand-sub">FOREX AUTOPILOT</div></div></div>
@@ -122,7 +122,7 @@ function render(): void {
     </div>
     <nav class="bottom-nav" aria-label="Main navigation">${navigation.map(({page,icon})=>`<button type="button" data-page="${page}" class="${page===currentPage?"active":""}"><span>${icon}</span>${page==="Risk & Safety"?"Safety":page}</button>`).join("")}</nav>
   `;
-  app.querySelectorAll<HTMLButtonElement>("[data-page]").forEach((button) => {
+  app!.querySelectorAll<HTMLButtonElement>("[data-page]").forEach((button) => {
     button.addEventListener("click", () => {
       const page = button.dataset.page as Page | undefined;
       if (page && navigation.some((item) => item.page === page)) {
