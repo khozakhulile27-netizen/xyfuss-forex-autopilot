@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/xyfuss-core"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+version = "0.2.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "deny"
+pedantic = "allow"
