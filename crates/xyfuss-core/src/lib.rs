@@ -1,7 +1,7 @@
-pub mod eligibility;
-
 //! XYFUSS deterministic pre-trade safety gate.
 //! This crate does not place orders. It rejects unsafe or incomplete proposals.
+
+pub mod eligibility;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RiskLimits {
