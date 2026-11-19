@@ -38,3 +38,9 @@ dist/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Rust build artifacts
+/target/
+
+# Dashboard dependencies
+/apps/dashboard/node_modules/

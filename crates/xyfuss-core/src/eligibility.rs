@@ -71,7 +71,11 @@ pub fn evaluate_eligibility(
         reasons.push("missing_symbol".to_owned());
     } else if policy.allowed_symbols.is_empty() {
         reasons.push("symbol_allowlist_not_configured".to_owned());
-    } else if !policy.allowed_symbols.iter().any(|item| item.eq_ignore_ascii_case(&input.symbol)) {
+    } else if !policy
+        .allowed_symbols
+        .iter()
+        .any(|item| item.eq_ignore_ascii_case(&input.symbol))
+    {
         reasons.push("symbol_not_allowlisted".to_owned());
     }
 
@@ -79,7 +83,11 @@ pub fn evaluate_eligibility(
         reasons.push("missing_strategy".to_owned());
     } else if policy.allowed_strategies.is_empty() {
         reasons.push("strategy_allowlist_not_configured".to_owned());
-    } else if !policy.allowed_strategies.iter().any(|item| item == &input.strategy_id) {
+    } else if !policy
+        .allowed_strategies
+        .iter()
+        .any(|item| item == &input.strategy_id)
+    {
         reasons.push("strategy_not_allowlisted".to_owned());
     }
 
@@ -91,14 +99,17 @@ pub fn evaluate_eligibility(
     }
 
     if input.data_integrity != DataIntegrity::Verified {
-        reasons.push(match input.data_integrity {
-            DataIntegrity::Missing => "market_data_missing",
-            DataIntegrity::Stale => "market_data_stale",
-            DataIntegrity::Contradictory => "market_data_contradictory",
-            DataIntegrity::Malformed => "market_data_malformed",
-            DataIntegrity::Unverified => "market_data_unverified",
-            DataIntegrity::Verified => unreachable!(),
-        }.to_owned());
+        reasons.push(
+            match input.data_integrity {
+                DataIntegrity::Missing => "market_data_missing",
+                DataIntegrity::Stale => "market_data_stale",
+                DataIntegrity::Contradictory => "market_data_contradictory",
+                DataIntegrity::Malformed => "market_data_malformed",
+                DataIntegrity::Unverified => "market_data_unverified",
+                DataIntegrity::Verified => unreachable!(),
+            }
+            .to_owned(),
+        );
     }
 
     if input.market_age_seconds > policy.maximum_market_age_seconds {
@@ -181,8 +192,16 @@ mod tests {
     #[test]
     fn empty_default_allowlists_fail_closed() {
         let verdict = evaluate_eligibility(&valid_input(), &EligibilityPolicy::default());
-        assert!(verdict.reasons.contains(&"symbol_allowlist_not_configured".to_owned()));
-        assert!(verdict.reasons.contains(&"strategy_allowlist_not_configured".to_owned()));
+        assert!(
+            verdict
+                .reasons
+                .contains(&"symbol_allowlist_not_configured".to_owned())
+        );
+        assert!(
+            verdict
+                .reasons
+                .contains(&"strategy_allowlist_not_configured".to_owned())
+        );
     }
 
     #[test]
@@ -211,8 +230,16 @@ mod tests {
             ..EligibilityPolicy::default()
         };
         let verdict = evaluate_eligibility(&valid_input(), &policy);
-        assert!(verdict.reasons.contains(&"symbol_not_allowlisted".to_owned()));
-        assert!(verdict.reasons.contains(&"strategy_not_allowlisted".to_owned()));
+        assert!(
+            verdict
+                .reasons
+                .contains(&"symbol_not_allowlisted".to_owned())
+        );
+        assert!(
+            verdict
+                .reasons
+                .contains(&"strategy_not_allowlisted".to_owned())
+        );
     }
 
     #[test]
@@ -222,7 +249,11 @@ mod tests {
         input.account_permitted = false;
         let verdict = evaluate_eligibility(&input, &EligibilityPolicy::default());
         assert!(verdict.reasons.contains(&"broker_not_connected".to_owned()));
-        assert!(verdict.reasons.contains(&"account_not_permitted".to_owned()));
+        assert!(
+            verdict
+                .reasons
+                .contains(&"account_not_permitted".to_owned())
+        );
     }
 
     #[test]
@@ -231,7 +262,11 @@ mod tests {
         input.strategy_validated = false;
         input.trading_halt_active = true;
         let verdict = evaluate_eligibility(&input, &EligibilityPolicy::default());
-        assert!(verdict.reasons.contains(&"strategy_not_validated".to_owned()));
+        assert!(
+            verdict
+                .reasons
+                .contains(&"strategy_not_validated".to_owned())
+        );
         assert!(verdict.reasons.contains(&"trading_halt_active".to_owned()));
     }
 
