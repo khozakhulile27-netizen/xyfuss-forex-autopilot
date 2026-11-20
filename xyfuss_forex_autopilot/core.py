@@ -6,7 +6,7 @@ from xyfuss_forex_autopilot.brokers import PaperBrokerAdapter
 from xyfuss_forex_autopilot.scheduler import DashboardServer
 from xyfuss_forex_autopilot.recommendations import EvidenceVerifier, RecommendationEngine
 from xyfuss_forex_autopilot.dashboard import LearningEngine
-from xyfuss_forex_autopilot.market import HistoricalTradeInvestigator, MarketInvestigator, TradeIdeaBuilder
+from xyfuss_forex_autopilot.market import HistoricalTradeInvestigator, MarketInvestigator, MarketUniverseScanner, TradeIdeaBuilder
 from xyfuss_forex_autopilot.learning import TradeMonitor
 from xyfuss_forex_autopilot.backtesting import NoTradeDecisionEngine
 from xyfuss_forex_autopilot.risk import RiskManager, StopLossEngine
@@ -18,7 +18,7 @@ from xyfuss_forex_autopilot.profit_allocation import ProfitAllocationManager
 class XyFussForexAutopilot:
     """Main orchestration layer for the independent Forex autopilot."""
 
-    def __init__(self, settings: dict | None = None):
+    def __init__(self, settings: dict | None = None, broker=None):
         self.settings = settings or {}
         self.market_investigator = MarketInvestigator()
         self.historical_investigator = HistoricalTradeInvestigator()
@@ -27,11 +27,17 @@ class XyFussForexAutopilot:
         self.evidence_verifier = EvidenceVerifier()
         self.recommendation_engine = RecommendationEngine()
         self.no_trade_engine = NoTradeDecisionEngine()
+        self.market_scanner = MarketUniverseScanner(
+            market_investigator=self.market_investigator,
+            strategy_engine=self.strategy_engine,
+            evidence_verifier=self.evidence_verifier,
+            no_trade_engine=self.no_trade_engine,
+        )
         self.risk_manager = RiskManager()
         self.stop_loss_engine = StopLossEngine()
         self.backtester = Backtester()
         self.paper_trading = PaperTradingEngine()
-        self.broker = PaperBrokerAdapter()
+        self.broker = broker or PaperBrokerAdapter()
         self.monitor = TradeMonitor()
         self.learning = LearningEngine()
         self.audit = AuditReporter()
@@ -143,6 +149,74 @@ class XyFussForexAutopilot:
         self.audit.record("trade_opened", {"trade_id": trade_id, "symbol": symbol, "direction": best.direction, "stop_loss": stop_plan["stop_loss"], "take_profit": take_profit, "atr": stop_plan["atr"], "spread": spread, "slippage": slippage, "mode": "paper"})
         return {"decision": "TRADE_ALLOWED", "trade_id": trade_id, "trade": trade, "market": market_data, "risk": risk_assessment}
 
+    def scan_markets(
+        self,
+        allowed_symbols: list[str] | None = None,
+        broker=None,
+        period: str | None = None,
+        weeks: int | None = None,
+        count: int | None = None,
+    ) -> dict:
+        active_broker = broker or self.broker
+        watchlist = (
+            allowed_symbols
+            if allowed_symbols is not None
+            else self.settings.get("market_watchlist", [])
+        )
+        if not hasattr(active_broker, "get_market_data") or not hasattr(active_broker, "get_historical_bars"):
+            return {
+                "status": "blocked",
+                "reason": "No authenticated market-data broker is configured.",
+                "scanned": 0,
+                "candidates": [],
+                "best_candidate": None,
+                "no_trade": [],
+            }
+
+        result = self.market_scanner.scan(
+            broker=active_broker,
+            allowed_symbols=watchlist,
+            period=period or self.settings.get("market_period", "M5"),
+            weeks=weeks or int(self.settings.get("market_history_weeks", 1)),
+            count=count or int(self.settings.get("market_candle_count", 500)),
+            max_age_seconds=float(self.settings.get("market_max_age_seconds", 900.0)),
+            minimum_candles=int(self.settings.get("market_minimum_candles", 30)),
+        )
+        self.audit.record(
+            "market_scan_completed",
+            {
+                "status": result.get("status"),
+                "scanned": result.get("scanned", 0),
+                "candidate_count": result.get("candidate_count", 0),
+                "best_symbol": (
+                    result.get("best_candidate", {}).get("symbol")
+                    if result.get("best_candidate")
+                    else None
+                ),
+            },
+        )
+        return result
+
+    def run_autonomous_cycle(self) -> dict:
+        if self.emergency_stop:
+            return {
+                "status": "stopped",
+                "reason": "Emergency stop is active.",
+                "scanned": 0,
+                "candidates": [],
+                "best_candidate": None,
+            }
+        result = self.scan_markets()
+        self.audit.record(
+            "autonomous_cycle_completed",
+            {
+                "status": result.get("status"),
+                "scanned": result.get("scanned", 0),
+                "candidate_count": result.get("candidate_count", 0),
+            },
+        )
+        return result
+
     def run_backtest(self, trades: list[dict]) -> dict:
         return self.backtester.run(trades)
 
@@ -163,13 +237,14 @@ class XyFussForexAutopilot:
 
     def activate_emergency_stop(self) -> dict:
         self.emergency_stop = True
+        self.scheduler.stop()
         self.audit.record("emergency_stop", {"status": "active"})
         return {"status": "stopped", "live_trading_enabled": False}
 
     def run_scheduler(self, interval_seconds: int | None = None):
         self.scheduler = AutonomousScheduler(
             interval_seconds=interval_seconds or self.settings.get("scheduler_interval_seconds", 300),
-            callback=lambda: self.audit.record("scheduler_tick", {"status": "cycle"}),
+            callback=self.run_autonomous_cycle,
         )
         self.scheduler.start()
         return self.scheduler
