@@ -36,6 +36,7 @@ class OfficialCTraderBackend:
             "ctid_trader_account_id": int(ctid_trader_account_id),
         }
         self.permission_scope: int | None = None
+        self._authenticated = False
         self._client = None
         self._connected = threading.Event()
         self._disconnected = threading.Event()
@@ -69,6 +70,11 @@ class OfficialCTraderBackend:
             )
 
     def connect(self) -> bool:
+        if self._authenticated and not self._disconnected.is_set():
+            return True
+        self._connected.clear()
+        self._disconnected.clear()
+        self._authenticated = False
         try:
             api = importlib.import_module("ctrader_open_api")
             messages = importlib.import_module("ctrader_open_api.messages.OpenApiMessages_pb2")
@@ -84,13 +90,14 @@ class OfficialCTraderBackend:
         )
         self._client.setConnectedCallback(lambda _client: self._connected.set())
         self._client.setDisconnectedCallback(lambda _client, _reason: self._disconnected.set())
-        self._client.startService()
         from twisted.internet import reactor
-        threading.Thread(
-            target=lambda: reactor.run(installSignalHandlers=False),
-            name="xyfuss-ctrader-reactor",
-            daemon=True,
-        ).start()
+        self._client.startService()
+        if not reactor.running:
+            threading.Thread(
+                target=lambda: reactor.run(installSignalHandlers=False),
+                name="xyfuss-ctrader-reactor",
+                daemon=True,
+            ).start()
         if not self._connected.wait(timeout=15):
             return False
 
@@ -113,6 +120,7 @@ class OfficialCTraderBackend:
         authorised_id = int(getattr(account_response, "ctidTraderAccountId", 0))
         if authorised_id != self.credentials["ctid_trader_account_id"]:
             raise CTraderIntegrationError("cTrader did not confirm authorisation for the selected account.")
+        self._authenticated = True
         return True
 
     def _wait(self, deferred, timeout: float = 15.0):
@@ -129,8 +137,10 @@ class OfficialCTraderBackend:
         return self._wait(self._client.send(request), timeout=timeout)
 
     def disconnect(self) -> None:
+        self._authenticated = False
         if self._client is not None:
             self._client.stopService()
+            self._client = None
 
     def symbols(self) -> list[dict]:
         messages = importlib.import_module("ctrader_open_api.messages.OpenApiMessages_pb2")
