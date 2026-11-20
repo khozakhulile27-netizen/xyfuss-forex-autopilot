@@ -145,10 +145,13 @@ class OfficialCTraderBackend:
     def _send_heartbeat(self) -> None:
         if self._client is None or not self._authenticated:
             return
-        messages = importlib.import_module("ctrader_open_api.messages.OpenApiMessages_pb2")
-        heartbeat = messages.ProtoHeartbeatEvent()
-        deferred = self._client.send(heartbeat)
-        deferred.addErrback(self._heartbeat_failed)
+        try:
+            messages = importlib.import_module("ctrader_open_api.messages.OpenApiCommonMessages_pb2")
+            heartbeat = messages.ProtoHeartbeatEvent()
+            deferred = self._client.send(heartbeat)
+            deferred.addErrback(self._heartbeat_failed)
+        except Exception as exc:
+            self._heartbeat_failed(exc)
 
     def _heartbeat_failed(self, failure):
         self._disconnected.set()
