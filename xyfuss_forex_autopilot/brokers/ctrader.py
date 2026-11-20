@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import threading
 from collections.abc import Mapping
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 
 from xyfuss_forex_autopilot.brokers import IdempotentOrderGate, LiveAdapterBase
@@ -148,9 +149,98 @@ class OfficialCTraderBackend:
         request.ctidTraderAccountId = self.credentials["ctid_trader_account_id"]
         response = self._request(request)
         return [
-            {"symbol_id": symbol.symbolId, "name": getattr(symbol, "symbolName", "")}
+            {
+                "symbol_id": symbol.symbolId,
+                "name": getattr(symbol, "symbolName", ""),
+                "digits": int(getattr(symbol, "digits", 5)),
+            }
             for symbol in getattr(response, "symbol", [])
         ]
+
+    @staticmethod
+    def _normalise_trendbars(trendbars, digits: int) -> list[dict]:
+        """Convert cTrader's relative OHLC values into actual prices."""
+        if not 0 <= int(digits) <= 10:
+            raise CTraderIntegrationError("cTrader returned invalid symbol price precision.")
+
+        normalised = []
+        for bar in trendbars:
+            required_fields = ("low", "deltaOpen", "deltaClose", "deltaHigh", "utcTimestampInMinutes")
+            if hasattr(bar, "HasField"):
+                missing = [field for field in required_fields if not bar.HasField(field)]
+                if missing:
+                    raise CTraderIntegrationError(
+                        "cTrader returned an incomplete trend bar: " + ", ".join(missing)
+                    )
+
+            low_raw = int(getattr(bar, "low", 0))
+            open_raw = low_raw + int(getattr(bar, "deltaOpen", 0))
+            close_raw = low_raw + int(getattr(bar, "deltaClose", 0))
+            high_raw = low_raw + int(getattr(bar, "deltaHigh", 0))
+            if low_raw <= 0 or not (low_raw <= open_raw <= high_raw) or not (low_raw <= close_raw <= high_raw):
+                raise CTraderIntegrationError("cTrader returned inconsistent OHLC values.")
+
+            timestamp_minutes = int(getattr(bar, "utcTimestampInMinutes", 0))
+            if timestamp_minutes <= 0:
+                raise CTraderIntegrationError("cTrader trend bar has no valid timestamp.")
+
+            price = lambda raw: round(raw / 100000.0, int(digits))
+            normalised.append({
+                "timestamp": datetime.fromtimestamp(
+                    timestamp_minutes * 60, tz=timezone.utc
+                ).isoformat(),
+                "open": price(open_raw),
+                "high": price(high_raw),
+                "low": price(low_raw),
+                "close": price(close_raw),
+                "volume": int(getattr(bar, "volume", 0)),
+            })
+
+        normalised.sort(key=lambda item: item["timestamp"])
+        return normalised
+
+    def historical_bars(
+        self,
+        symbol_id: int,
+        period: str = "M5",
+        weeks: int = 1,
+        count: int = 500,
+    ) -> list[dict]:
+        """Fetch timestamped historical candles for one cTrader demo symbol."""
+        if int(symbol_id) <= 0:
+            raise CTraderIntegrationError("symbol_id must be a positive cTrader symbol ID.")
+        if not 1 <= int(weeks) <= 52:
+            raise CTraderIntegrationError("weeks must be between 1 and 52.")
+        if not 1 <= int(count) <= 1000:
+            raise CTraderIntegrationError("count must be between 1 and 1000.")
+
+        messages = importlib.import_module("ctrader_open_api.messages.OpenApiMessages_pb2")
+        model = importlib.import_module("ctrader_open_api.messages.OpenApiModelMessages_pb2")
+        try:
+            period_value = model.ProtoOATrendbarPeriod.Value(str(period).upper())
+        except (AttributeError, ValueError) as exc:
+            raise CTraderIntegrationError("Unsupported cTrader trend-bar period.") from exc
+
+        symbol = next(
+            (item for item in self.symbols() if int(item["symbol_id"]) == int(symbol_id)),
+            None,
+        )
+        if symbol is None:
+            raise CTraderIntegrationError("The selected symbol ID is not available on this account.")
+
+        now = datetime.now(timezone.utc)
+        request = messages.ProtoOAGetTrendbarsReq()
+        request.ctidTraderAccountId = self.credentials["ctid_trader_account_id"]
+        request.symbolId = int(symbol_id)
+        request.period = period_value
+        request.fromTimestamp = int((now - timedelta(weeks=int(weeks))).timestamp() * 1000)
+        request.toTimestamp = int(now.timestamp() * 1000)
+        request.count = int(count)
+        response = self._request(request, timeout=30.0)
+        return self._normalise_trendbars(
+            getattr(response, "trendbar", []),
+            digits=int(symbol["digits"]),
+        )
 
     def trader(self) -> dict:
         messages = importlib.import_module("ctrader_open_api.messages.OpenApiMessages_pb2")
@@ -241,6 +331,24 @@ class CTraderDemoAdapter(LiveAdapterBase):
         if self.backend is None or not self.connect():
             raise CTraderIntegrationError("cTrader demo connection is unavailable.")
         return self.backend.symbols()
+
+    def get_historical_bars(
+        self,
+        symbol_id: int,
+        period: str = "M5",
+        weeks: int = 1,
+        count: int = 500,
+    ) -> list[dict]:
+        if self.backend is None or not self.connect():
+            raise CTraderIntegrationError("cTrader demo connection is unavailable.")
+        if not hasattr(self.backend, "historical_bars"):
+            raise CTraderIntegrationError("The configured cTrader backend does not provide historical candles.")
+        return self.backend.historical_bars(
+            symbol_id=symbol_id,
+            period=period,
+            weeks=weeks,
+            count=count,
+        )
 
     def get_account_info(self) -> dict:
         if self.backend is None or not self.connect():
