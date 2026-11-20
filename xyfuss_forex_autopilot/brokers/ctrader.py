@@ -15,6 +15,10 @@ class CTraderIntegrationError(RuntimeError):
 class OfficialCTraderBackend:
     """Official Spotware OpenApiPy transport, with demo endpoint enforced."""
 
+    # Values defined by ProtoOAClientPermissionScope in Spotware's protocol.
+    SCOPE_VIEW = 0
+    SCOPE_TRADE = 1
+
     def __init__(
         self,
         client_id: str,
@@ -29,11 +33,40 @@ class OfficialCTraderBackend:
             "client_id": client_id,
             "client_secret": client_secret,
             "access_token": access_token,
-            "ctid_trader_account_id": ctid_trader_account_id,
+            "ctid_trader_account_id": int(ctid_trader_account_id),
         }
+        self.permission_scope: int | None = None
         self._client = None
         self._connected = threading.Event()
         self._disconnected = threading.Event()
+
+    def _validate_account_grant(self, response) -> int:
+        """Confirm the token grants the exact account selected by the operator."""
+        granted_accounts = getattr(response, "ctidTraderAccount", None)
+        if not granted_accounts:
+            raise CTraderIntegrationError("The cTrader access token has no authorised accounts.")
+
+        requested_id = self.credentials["ctid_trader_account_id"]
+        granted_ids = {
+            int(getattr(account, "ctidTraderAccountId", 0))
+            for account in granted_accounts
+        }
+        if requested_id not in granted_ids:
+            raise CTraderIntegrationError(
+                "The selected cTrader account is not authorised by this access token."
+            )
+
+        scope = int(getattr(response, "permissionScope", self.SCOPE_VIEW))
+        if scope not in (self.SCOPE_VIEW, self.SCOPE_TRADE):
+            raise CTraderIntegrationError("cTrader returned an unknown account permission scope.")
+        self.permission_scope = scope
+        return scope
+
+    def _require_trading_permission(self) -> None:
+        if self.permission_scope != self.SCOPE_TRADE:
+            raise CTraderIntegrationError(
+                "This cTrader token is view-only; trading permission was not granted."
+            )
 
     def connect(self) -> bool:
         try:
@@ -66,10 +99,20 @@ class OfficialCTraderBackend:
         application.clientSecret = self.credentials["client_secret"]
         self._wait(self._client.send(application))
 
+        # Spotware requires account discovery after application authorisation.
+        # Do not authorise an account merely because its ID was supplied locally.
+        account_list = messages.ProtoOAGetAccountListByAccessTokenReq()
+        account_list.accessToken = self.credentials["access_token"]
+        granted_accounts = self._wait(self._client.send(account_list))
+        self._validate_account_grant(granted_accounts)
+
         account = messages.ProtoOAAccountAuthReq()
         account.ctidTraderAccountId = self.credentials["ctid_trader_account_id"]
         account.accessToken = self.credentials["access_token"]
-        self._wait(self._client.send(account))
+        account_response = self._wait(self._client.send(account))
+        authorised_id = int(getattr(account_response, "ctidTraderAccountId", 0))
+        if authorised_id != self.credentials["ctid_trader_account_id"]:
+            raise CTraderIntegrationError("cTrader did not confirm authorisation for the selected account.")
         return True
 
     def _wait(self, deferred, timeout: float = 15.0):
@@ -126,6 +169,9 @@ class OfficialCTraderBackend:
         take_profit: float | None = None,
         broker_client_order_id: str | None = None,
     ) -> dict:
+        self._require_trading_permission()
+        if stop_loss is None or take_profit is None:
+            raise CTraderIntegrationError("Every cTrader demo order requires broker-side stop-loss and take-profit.")
         messages = importlib.import_module("ctrader_open_api.messages.OpenApiMessages_pb2")
         model = importlib.import_module("ctrader_open_api.messages.OpenApiModelMessages_pb2")
         request = messages.ProtoOANewOrderReq()
@@ -135,10 +181,8 @@ class OfficialCTraderBackend:
         request.tradeSide = trade_side
         request.volume = volume
         request.timeInForce = model.GOOD_TILL_CANCEL
-        if stop_loss is not None:
-            request.stopLoss = stop_loss
-        if take_profit is not None:
-            request.takeProfit = take_profit
+        request.stopLoss = stop_loss
+        request.takeProfit = take_profit
         if broker_client_order_id:
             request.clientOrderId = broker_client_order_id
         response = self._request(request)
@@ -221,6 +265,8 @@ class CTraderDemoAdapter(LiveAdapterBase):
             raise CTraderIntegrationError("client_order_id is required")
         if symbol_id is None:
             raise CTraderIntegrationError("symbol_id is required for cTrader order submission")
+        if stop_loss is None or take_profit is None:
+            raise CTraderIntegrationError("Every cTrader demo order requires stop-loss and take-profit.")
 
         trade_side = 1 if direction.lower() == "buy" else 2
         volume = int(round(lot_size * 100000))
