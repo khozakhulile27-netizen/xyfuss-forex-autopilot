@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -73,10 +74,14 @@ class CTraderOAuthService:
             encryption_key=os.environ["XYFUSS_TOKEN_ENCRYPTION_KEY"],
         )
 
-    def _db(self) -> sqlite3.Connection:
+    @contextmanager
+    def _db(self):
         connection = sqlite3.connect(self.database_path, timeout=10)
-        connection.execute("PRAGMA journal_mode=WAL")
-        return connection
+        try:
+            connection.execute("PRAGMA journal_mode=WAL")
+            yield connection
+        finally:
+            connection.close()
 
     def _init_db(self) -> None:
         with self._db() as db:
