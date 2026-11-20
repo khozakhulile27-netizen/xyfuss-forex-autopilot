@@ -91,3 +91,40 @@ def test_heartbeat_failure_marks_connection_unusable_and_stops_loop():
     assert backend._authenticated is False
     assert backend._disconnected.is_set()
     assert backend._heartbeat.running is False
+
+
+def test_heartbeat_uses_spotware_common_message_module(monkeypatch):
+    import importlib
+
+    sent = []
+
+    class Heartbeat:
+        pass
+
+    class Deferred:
+        def addErrback(self, callback):
+            self.errback = callback
+
+    class Client:
+        def send(self, message):
+            sent.append(message)
+            return Deferred()
+
+    class CommonMessages:
+        ProtoHeartbeatEvent = Heartbeat
+
+    backend = make_backend()
+    backend._client = Client()
+    backend._authenticated = True
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: CommonMessages
+        if name == "ctrader_open_api.messages.OpenApiCommonMessages_pb2"
+        else None,
+    )
+
+    backend._send_heartbeat()
+
+    assert len(sent) == 1
+    assert isinstance(sent[0], Heartbeat)
