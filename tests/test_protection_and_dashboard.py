@@ -19,11 +19,11 @@ def test_fresh_market_data_and_stale_data():
     assert investigator.validate_freshness(stale, now=now)["fresh"] is False
 
 
-def test_live_configuration_and_emergency_stop_never_execute():
-    live = XyFussForexAutopilot({"live_trading_enabled": True})
+def test_live_configuration_and_emergency_stop_never_execute(tmp_path):
+    live = XyFussForexAutopilot({"live_trading_enabled": True, "trading_state_path": str(tmp_path / "live-state.json")})
     result = live.decide_trade("EUR/USD", [])
     assert result["decision"] == "NO_TRADE"
-    emergency = XyFussForexAutopilot()
+    emergency = XyFussForexAutopilot({"trading_state_path": str(tmp_path / "emergency-state.json")})
     emergency.activate_emergency_stop()
     result = emergency.decide_trade("EUR/USD", [])
     assert result["decision"] == "NO_TRADE"
