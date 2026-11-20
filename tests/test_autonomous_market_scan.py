@@ -66,6 +66,11 @@ def test_scheduler_records_failure_and_recovers_on_next_cycle():
         assert first_cycle.wait(timeout=3)
         assert recovered_cycle.wait(timeout=3)
         status = scheduler.status()
+        for _ in range(100):
+            if status["cycles"] >= 2:
+                break
+            threading.Event().wait(0.01)
+            status = scheduler.status()
         assert status["cycles"] >= 2
         assert status["last_error"] is None
         assert status["last_result"] == {"status": "complete"}
