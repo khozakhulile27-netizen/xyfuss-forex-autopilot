@@ -7,6 +7,7 @@ on:
     branches:
       - main
       - feature/ctrader-account-auth-hardening
+      - feature/ctrader-oauth-control-centre
 
 jobs:
   test:
