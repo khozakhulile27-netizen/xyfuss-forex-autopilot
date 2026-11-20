@@ -143,13 +143,15 @@ function render(): void {
     try {
       const response = await fetch("/api/v1/ctrader/status", { headers: { Accept: "application/json" }, cache: "no-store" });
       if (!response.ok) throw new Error("Control service is not ready");
-      const data = await response.json() as { connected?: boolean; environment?: string };
+      const data = await response.json() as { connected?: boolean; configured?: boolean; environment?: string };
       connection.textContent = data.connected ? "CONNECTED" : "NOT CONNECTED";
       connection.className = data.connected ? "safe" : "blocked";
-      statusLabel.textContent = data.connected ? "Secure account token stored" : "Ready to connect";
+      statusLabel.textContent = data.connected ? "Secure account token stored" : data.configured ? "Ready to connect" : "Server setup required";
       if (message) message.textContent = data.connected
         ? "cTrader authorisation is stored securely on the server. Account discovery and live market data are the next integration steps."
-        : "No cTrader account is connected. Select Connect to begin official cTrader authorisation.";
+        : data.configured
+          ? "No cTrader account is connected. Select Connect to begin official cTrader authorisation."
+          : "The dashboard is running locally, but the private server still needs the cTrader application settings and encryption key before account connection can start.";
     } catch {
       connection.textContent = "SERVICE OFFLINE";
       connection.className = "blocked";
