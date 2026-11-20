@@ -77,6 +77,8 @@ class OfficialCTraderBackend:
     def connect(self) -> bool:
         if self._authenticated and not self._disconnected.is_set():
             return True
+        if self._client is not None:
+            self.disconnect()
         self._connected.clear()
         self._disconnected.clear()
         self._authenticated = False
