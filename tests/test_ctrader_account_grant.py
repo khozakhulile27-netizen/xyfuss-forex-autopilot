@@ -66,3 +66,28 @@ def test_trade_scope_is_required_before_order_payload_is_built():
             stop_loss=None,
             take_profit=1.2,
         )
+
+
+def test_cTrader_requests_require_an_authenticated_account_session():
+    backend = make_backend()
+
+    with pytest.raises(CTraderIntegrationError, match="account session is not authenticated"):
+        backend._request(object())
+
+
+def test_heartbeat_failure_marks_connection_unusable_and_stops_loop():
+    class FakeLoop:
+        running = True
+
+        def stop(self):
+            self.running = False
+
+    backend = make_backend()
+    backend._authenticated = True
+    backend._heartbeat = FakeLoop()
+
+    backend._heartbeat_failed(RuntimeError("simulated heartbeat failure"))
+
+    assert backend._authenticated is False
+    assert backend._disconnected.is_set()
+    assert backend._heartbeat.running is False
