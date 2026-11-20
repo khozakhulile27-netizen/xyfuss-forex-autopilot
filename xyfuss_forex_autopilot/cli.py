@@ -8,6 +8,7 @@ import json
 import time
 from pathlib import Path
 
+from xyfuss_forex_autopilot.cloud_heartbeat import CloudHeartbeat
 from xyfuss_forex_autopilot.config import load_settings
 from xyfuss_forex_autopilot.core import XyFussForexAutopilot
 
@@ -145,14 +146,26 @@ def main() -> int:
         return 0
 
     if args.command == "dashboard":
-        dashboard = autopilot.run_dashboard(host=args.host, port=args.port)
-        print(f"Dashboard running at http://{args.host}:{args.port}")
+        if settings.live_trading_enabled or settings.trading_mode != "paper":
+            print("Cloud presence reporting is restricted to paper mode.")
+            return 1
+        heartbeat = CloudHeartbeat.from_environment()
+        dashboard = None
         try:
+            if heartbeat is not None:
+                heartbeat.start()
+                print("XYFUSS CLOUD presence reporting enabled (paper-mode heartbeat only).")
+            dashboard = autopilot.run_dashboard(host=args.host, port=args.port)
+            print(f"Dashboard running at http://{args.host}:{args.port}")
             while True:
-                import time
                 time.sleep(1)
         except KeyboardInterrupt:
-            dashboard.stop()
+            print("\\nStopping XYFUSS Forex Autopilot dashboard.")
+        finally:
+            if dashboard is not None:
+                dashboard.stop()
+            if heartbeat is not None:
+                heartbeat.stop()
         return 0
 
     if args.command == "audit":
