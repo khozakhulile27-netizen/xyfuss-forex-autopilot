@@ -90,16 +90,25 @@ function activity(): string {
 }
 
 function settings(): string {
-  return `<div class="section-head"><h2>Connection settings</h2><span>Not configured</span></div>
+  return `<div class="section-head"><h2>Broker account connection</h2><span id="ctrader-status-label">Checking secure connection…</span></div>
   <div class="content-panel">
-    <article class="card"><div class="status-list">
-      <div class="status-row"><span>Robot API</span><strong class="blocked">NOT CONFIGURED</strong></div>
-      <div class="status-row"><span>Broker</span><strong class="blocked">NOT CONNECTED</strong></div>
-      <div class="status-row"><span>Authentication</span><strong class="blocked">NOT CONFIGURED</strong></div>
-      <div class="status-row"><span>Trading mode</span><strong class="safe">PAPER / DEMO ONLY</strong></div>
-    </div></article>
-    <div class="banner"><div class="banner-icon">🔒</div><div><strong>SECURITY FIRST</strong><p>Broker passwords, API secrets and account tokens must never be entered into this static dashboard or committed to GitHub. The future backend must store secrets securely and enforce authenticated access.</p></div></div>
-    <p class="footer-note">The dashboard is currently a frontend preview. A secure API, authentication, server deployment, broker adapter and operator audit trail are still required before it can control the robot.</p>
+    <article class="card">
+      <div class="broker-heading"><div class="broker-logo">cT</div><div><strong>cTrader Open API</strong><p class="muted-copy">Connect through the official cTrader sign-in page. Your cTrader password is never entered into XYFUSS.</p></div></div>
+      <div class="status-list">
+        <div class="status-row"><span>Connection</span><strong id="ctrader-connection" class="blocked">CHECKING</strong></div>
+        <div class="status-row"><span>Environment</span><strong>DEMO ONLY</strong></div>
+        <div class="status-row"><span>Permission requested</span><strong>VIEW ONLY</strong></div>
+        <div class="status-row"><span>Token storage</span><strong>ENCRYPTED ON SERVER</strong></div>
+      </div>
+      <div class="connection-actions">
+        <button class="button primary" id="ctrader-connect" type="button">Connect cTrader account</button>
+        <button class="button" id="ctrader-disconnect" type="button">Disconnect</button>
+      </div>
+      <p class="inline-message" id="ctrader-message" role="status">The secure control service must be running before you can connect.</p>
+    </article>
+    <div class="banner"><div class="banner-icon">🔒</div><div><strong>YOUR CREDENTIALS STAY PRIVATE</strong><p>The cTrader Client ID and Client Secret are configured once on the private XYFUSS server. The dashboard never stores or displays them. After you press Connect, cTrader asks you to sign in and approve read-only account access.</p></div></div>
+    <article class="card"><strong>Before the first connection</strong><div class="setup-steps"><div><b>1</b><span>Register and get your cTrader Open API application approved by Spotware.</span></div><div><b>2</b><span>Add the exact server callback URL to the approved cTrader application's Redirect URIs.</span></div><div><b>3</b><span>Set the four server environment variables described in <code>docs/CTRADER_CONTROL_CENTRE.md</code>.</span></div><div><b>4</b><span>Open this private dashboard and select <em>Connect cTrader account</em>.</span></div></div></article>
+    <p class="footer-note">This first connection requests view-only access and is limited to demo integration. It does not enable order placement or live trading. Do not paste broker passwords, API secrets or access tokens into this screen, chat, or GitHub.</p>
   </div>`;
 }
 
@@ -122,6 +131,62 @@ function render(): void {
     </div>
     <nav class="bottom-nav" aria-label="Main navigation">${navigation.map(({page,icon})=>`<button type="button" data-page="${page}" class="${page===currentPage?"active":""}"><span>${icon}</span>${page==="Risk & Safety"?"Safety":page}</button>`).join("")}</nav>
   `;
+  const connectButton = app!.querySelector<HTMLButtonElement>("#ctrader-connect");
+  const disconnectButton = app!.querySelector<HTMLButtonElement>("#ctrader-disconnect");
+  const message = app!.querySelector<HTMLElement>("#ctrader-message");
+  const connection = app!.querySelector<HTMLElement>("#ctrader-connection");
+  const statusLabel = app!.querySelector<HTMLElement>("#ctrader-status-label");
+
+  const refreshBrokerStatus = async (): Promise<void> => {
+    if (!connection || !statusLabel) return;
+    try {
+      const response = await fetch("/api/v1/ctrader/status", { headers: { Accept: "application/json" }, cache: "no-store" });
+      if (!response.ok) throw new Error("Control service is not ready");
+      const data = await response.json() as { connected?: boolean; environment?: string };
+      connection.textContent = data.connected ? "CONNECTED" : "NOT CONNECTED";
+      connection.className = data.connected ? "safe" : "blocked";
+      statusLabel.textContent = data.connected ? "Secure account token stored" : "Ready to connect";
+      if (message) message.textContent = data.connected
+        ? "cTrader authorisation is stored securely on the server. Account discovery and live market data are the next integration steps."
+        : "No cTrader account is connected. Select Connect to begin official cTrader authorisation.";
+    } catch {
+      connection.textContent = "SERVICE OFFLINE";
+      connection.className = "blocked";
+      statusLabel.textContent = "Control service unavailable";
+      if (message) message.textContent = "The cTrader control service is not running or is not reachable at this dashboard address.";
+    }
+  };
+
+  connectButton?.addEventListener("click", async () => {
+    connectButton.disabled = true;
+    if (message) message.textContent = "Preparing secure cTrader authorisation…";
+    try {
+      const response = await fetch("/api/v1/ctrader/connect", { headers: { Accept: "application/json" }, cache: "no-store" });
+      const data = await response.json() as { authorization_url?: string; error?: string };
+      if (!response.ok || !data.authorization_url) throw new Error(data.error || "Could not start cTrader authorisation.");
+      window.location.assign(data.authorization_url);
+    } catch (error) {
+      if (message) message.textContent = error instanceof Error ? error.message : "Could not start cTrader authorisation.";
+      connectButton.disabled = false;
+    }
+  });
+
+  disconnectButton?.addEventListener("click", async () => {
+    disconnectButton.disabled = true;
+    if (message) message.textContent = "Disconnecting cTrader…";
+    try {
+      const response = await fetch("/api/v1/ctrader/disconnect", { method: "POST", headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error("Disconnect request failed.");
+      await refreshBrokerStatus();
+    } catch (error) {
+      if (message) message.textContent = error instanceof Error ? error.message : "Disconnect request failed.";
+    } finally {
+      disconnectButton.disabled = false;
+    }
+  });
+
+  if (currentPage === "Settings") void refreshBrokerStatus();
+
   app!.querySelectorAll<HTMLButtonElement>("[data-page]").forEach((button) => {
     button.addEventListener("click", () => {
       const page = button.dataset.page as Page | undefined;
