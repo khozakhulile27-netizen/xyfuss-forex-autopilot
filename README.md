@@ -49,7 +49,7 @@ Copy config.example.yaml to config.yaml. Set an explicit market_watchlist only a
 
 Python reference tests:
 
-    python -m pip install pytest PyYAML
+    python -m pip install pytest PyYAML cryptography
     python -m compileall -q xyfuss_forex_autopilot tests scripts
     python -m pytest -q
 
