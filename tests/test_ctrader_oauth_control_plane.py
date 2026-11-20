@@ -79,7 +79,6 @@ def test_callback_encrypts_tokens_and_status_never_returns_them(tmp_path):
 
     stored = service._load_tokens()
     assert stored is not None
-    encrypted_blob, _ = service._db().__enter__() if False else (None, None)
     assert service.access_token() == "access-token-secret"
     with service._db() as db:
         blob = db.execute("SELECT encrypted FROM oauth_tokens WHERE id=1").fetchone()[0]
