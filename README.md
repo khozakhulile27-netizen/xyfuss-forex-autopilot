@@ -14,7 +14,7 @@ Build an autonomous FX system that discovers market opportunities, evaluates com
 
 ## Python reference capabilities
 
-- Historical cTrader demo candles can be requested and normalised into timestamped OHLCV records.
+- Historical cTrader demo candles can be requested and normalised into timestamped OHLCV records; historical requests are rate-limited and the authenticated connection sends periodic heartbeats.
 - The market-universe scanner checks an explicit symbol allowlist, candle freshness and minimum history, compares strategy candidates, and ranks only candidates that pass its evidence and NO_TRADE checks.
 - The autonomous scheduler invokes the scan cycle repeatedly, records failures and continues after a failed cycle.
 - The scanner never places, modifies or closes orders. A candidate is labelled CANDIDATE_FOR_RISK_ASSESSMENT, not an execution approval.
