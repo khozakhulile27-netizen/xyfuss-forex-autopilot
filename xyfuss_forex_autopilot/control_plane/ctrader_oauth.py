@@ -80,6 +80,7 @@ class CTraderOAuthService:
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             yield connection
+            connection.commit()
         finally:
             connection.close()
 
