@@ -153,6 +153,7 @@ class OfficialCTraderBackend:
     def _heartbeat_failed(self, failure):
         self._disconnected.set()
         self._authenticated = False
+        self._stop_heartbeat()
         return None
 
     def _stop_heartbeat(self) -> None:
