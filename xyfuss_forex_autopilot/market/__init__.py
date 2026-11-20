@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Iterable
 
 
@@ -184,6 +185,16 @@ class MarketUniverseScanner:
         max_age_seconds: float = 900.0,
         minimum_candles: int = 30,
     ) -> dict:
+        if allowed_symbols is None or max_age_seconds <= 0 or minimum_candles < 1:
+            return {
+                "status": "blocked",
+                "reason": "Invalid scan configuration or missing symbol allowlist.",
+                "scanned": 0,
+                "candidates": [],
+                "best_candidate": None,
+                "no_trade": [],
+            }
+
         requested = []
         seen = set()
         for item in allowed_symbols:
@@ -203,7 +214,27 @@ class MarketUniverseScanner:
                 "no_trade": [],
             }
 
-        available = broker.get_market_data()
+        try:
+            available = broker.get_market_data()
+        except Exception as exc:
+            return {
+                "status": "blocked",
+                "reason": "Broker market catalogue could not be verified; no symbols were scanned.",
+                "error_type": type(exc).__name__,
+                "scanned": 0,
+                "candidates": [],
+                "best_candidate": None,
+                "no_trade": [],
+            }
+        if not isinstance(available, list):
+            return {
+                "status": "blocked",
+                "reason": "Broker returned an invalid market catalogue.",
+                "scanned": 0,
+                "candidates": [],
+                "best_candidate": None,
+                "no_trade": [],
+            }
         by_name = {
             self._normalise_symbol(item.get("name", "")): item
             for item in available
@@ -266,6 +297,18 @@ class MarketUniverseScanner:
                     })
                     continue
 
+                directional = [
+                    item for item in directional
+                    if isfinite(float(getattr(item, "score", float("nan"))))
+                    and isfinite(float(getattr(item, "confidence", float("nan"))))
+                ]
+                if not directional:
+                    results.append({
+                        "symbol": requested_name,
+                        "decision": "NO_TRADE",
+                        "reason": "Strategy outputs contained invalid numeric values.",
+                    })
+                    continue
                 best = max(directional, key=lambda item: float(item.score))
                 evidence = self.evidence_verifier.verify(
                     market.get("evidence", []),
