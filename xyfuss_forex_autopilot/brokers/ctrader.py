@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import threading
+import time
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
@@ -41,6 +42,9 @@ class OfficialCTraderBackend:
         self._client = None
         self._connected = threading.Event()
         self._disconnected = threading.Event()
+        self._heartbeat = None
+        self._historical_request_lock = threading.Lock()
+        self._last_historical_request = 0.0
 
     def _validate_account_grant(self, response) -> int:
         """Confirm the token grants the exact account selected by the operator."""
@@ -90,7 +94,7 @@ class OfficialCTraderBackend:
             api.TcpProtocol,
         )
         self._client.setConnectedCallback(lambda _client: self._connected.set())
-        self._client.setDisconnectedCallback(lambda _client, _reason: self._disconnected.set())
+        self._client.setDisconnectedCallback(self._on_disconnected)
         from twisted.internet import reactor
         self._client.startService()
         if not reactor.running:
@@ -122,7 +126,38 @@ class OfficialCTraderBackend:
         if authorised_id != self.credentials["ctid_trader_account_id"]:
             raise CTraderIntegrationError("cTrader did not confirm authorisation for the selected account.")
         self._authenticated = True
+        self._start_heartbeat()
         return True
+
+    def _on_disconnected(self, _client, _reason) -> None:
+        self._disconnected.set()
+        self._authenticated = False
+        self._stop_heartbeat()
+
+    def _start_heartbeat(self) -> None:
+        from twisted.internet.task import LoopingCall
+
+        if self._heartbeat is not None and self._heartbeat.running:
+            return
+        self._heartbeat = LoopingCall(self._send_heartbeat)
+        self._heartbeat.start(10.0, now=False)
+
+    def _send_heartbeat(self) -> None:
+        if self._client is None or not self._authenticated:
+            return
+        messages = importlib.import_module("ctrader_open_api.messages.OpenApiMessages_pb2")
+        heartbeat = messages.ProtoHeartbeatEvent()
+        deferred = self._client.send(heartbeat)
+        deferred.addErrback(self._heartbeat_failed)
+
+    def _heartbeat_failed(self, failure):
+        self._disconnected.set()
+        self._authenticated = False
+        return None
+
+    def _stop_heartbeat(self) -> None:
+        if self._heartbeat is not None and self._heartbeat.running:
+            self._heartbeat.stop()
 
     def _wait(self, deferred, timeout: float = 15.0):
         future = Future()
@@ -133,12 +168,13 @@ class OfficialCTraderBackend:
             raise CTraderIntegrationError("cTrader request timed out.") from exc
 
     def _request(self, request, timeout: float = 15.0):
-        if self._client is None:
-            raise CTraderIntegrationError("cTrader is not connected.")
+        if self._client is None or not self._authenticated or self._disconnected.is_set():
+            raise CTraderIntegrationError("cTrader account session is not authenticated.")
         return self._wait(self._client.send(request), timeout=timeout)
 
     def disconnect(self) -> None:
         self._authenticated = False
+        self._stop_heartbeat()
         if self._client is not None:
             self._client.stopService()
             self._client = None
@@ -227,6 +263,12 @@ class OfficialCTraderBackend:
         )
         if symbol is None:
             raise CTraderIntegrationError("The selected symbol ID is not available on this account.")
+
+        with self._historical_request_lock:
+            elapsed = time.monotonic() - self._last_historical_request
+            if elapsed < 0.2:
+                time.sleep(0.2 - elapsed)
+            self._last_historical_request = time.monotonic()
 
         now = datetime.now(timezone.utc)
         request = messages.ProtoOAGetTrendbarsReq()
