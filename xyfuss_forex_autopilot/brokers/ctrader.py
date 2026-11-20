@@ -126,7 +126,7 @@ class OfficialCTraderBackend:
         if authorised_id != self.credentials["ctid_trader_account_id"]:
             raise CTraderIntegrationError("cTrader did not confirm authorisation for the selected account.")
         self._authenticated = True
-        self._start_heartbeat()
+        reactor.callFromThread(self._start_heartbeat)
         return True
 
     def _on_disconnected(self, _client, _reason) -> None:
@@ -135,6 +135,8 @@ class OfficialCTraderBackend:
         self._stop_heartbeat()
 
     def _start_heartbeat(self) -> None:
+        if not self._authenticated:
+            return
         from twisted.internet.task import LoopingCall
 
         if self._heartbeat is not None and self._heartbeat.running:
@@ -178,10 +180,21 @@ class OfficialCTraderBackend:
 
     def disconnect(self) -> None:
         self._authenticated = False
-        self._stop_heartbeat()
-        if self._client is not None:
-            self._client.stopService()
-            self._client = None
+        client = self._client
+        self._client = None
+        if client is not None:
+            try:
+                from twisted.internet import reactor
+            except ImportError:
+                self._stop_heartbeat()
+                client.stopService()
+            else:
+                if reactor.running:
+                    reactor.callFromThread(self._stop_heartbeat)
+                    reactor.callFromThread(client.stopService)
+                else:
+                    self._stop_heartbeat()
+                    client.stopService()
 
     def symbols(self) -> list[dict]:
         messages = importlib.import_module("ctrader_open_api.messages.OpenApiMessages_pb2")
