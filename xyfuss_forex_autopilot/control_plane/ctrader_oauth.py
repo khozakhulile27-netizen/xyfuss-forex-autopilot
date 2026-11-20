@@ -254,6 +254,7 @@ def create_wsgi_app(service: CTraderOAuthService | None = None):
 
         path = environ.get("PATH_INFO", "")
         method = environ.get("REQUEST_METHOD", "GET")
+        redirect_location = None
         try:
             active = service or CTraderOAuthService.from_environment()
             if path == "/api/v1/ctrader/connect" and method == "GET":
@@ -268,7 +269,8 @@ def create_wsgi_app(service: CTraderOAuthService | None = None):
                     query.get("state", [""])[0],
                 )
                 body = {"connected": True, "provider": "cTrader", "environment": "demo"}
-                status = "200 OK"
+                status = "303 See Other"
+                redirect_location = "/?ctrader=connected"
             elif path == "/api/v1/ctrader/status" and method == "GET":
                 body = active.status()
                 status = "200 OK"
@@ -287,12 +289,15 @@ def create_wsgi_app(service: CTraderOAuthService | None = None):
             status = "503 Service Unavailable"
 
         encoded = json.dumps(body).encode("utf-8")
-        start_response(status, [
+        response_headers = [
             ("Content-Type", "application/json; charset=utf-8"),
             ("Content-Length", str(len(encoded))),
             ("Cache-Control", "no-store"),
             ("X-Content-Type-Options", "nosniff"),
-        ])
+        ]
+        if redirect_location:
+            response_headers.append(("Location", redirect_location))
+        start_response(status, response_headers)
         return [encoded]
 
     return app
