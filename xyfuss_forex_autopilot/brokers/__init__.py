@@ -130,9 +130,10 @@ class IdempotentOrderGate:
 
 
 class LiveAdapterBase:
-    def __init__(self, credentials: Mapping[str, str] | None = None, live_trading_enabled: bool = False):
+    def __init__(self, credentials: Mapping[str, str] | None = None, live_trading_enabled: bool = False, demo_execution_enabled: bool = False):
         self.credentials = dict(credentials or {})
         self.live_trading_enabled = live_trading_enabled
+        self.demo_execution_enabled = demo_execution_enabled
         self.order_gate = IdempotentOrderGate()
 
     def connect(self) -> bool:
@@ -182,8 +183,8 @@ class MetaTrader5DemoAdapter(LiveAdapterBase):
 
     name = "mt5-demo"
 
-    def __init__(self, credentials=None, live_trading_enabled=False, backend=None):
-        super().__init__(credentials=credentials, live_trading_enabled=live_trading_enabled)
+    def __init__(self, credentials=None, live_trading_enabled=False, demo_execution_enabled=False, backend=None):
+        super().__init__(credentials=credentials, live_trading_enabled=live_trading_enabled, demo_execution_enabled=demo_execution_enabled)
         self.backend = backend
         self._connected = False
         self._emergency_stopped = False
@@ -216,6 +217,8 @@ class MetaTrader5DemoAdapter(LiveAdapterBase):
         )
 
     def connect(self, retries: int = 2) -> bool:
+        if self.live_trading_enabled:
+            raise MT5IntegrationError("Live trading is not supported by the MT5 demo adapter.")
         if self._emergency_stopped:
             return False
         if not self.validate_credentials():
@@ -351,8 +354,8 @@ class MetaTrader5DemoAdapter(LiveAdapterBase):
     def place_order(self, symbol: str, direction: str, lot_size: float, price: float,
                     stop_loss: float | None = None, take_profit: float | None = None,
                     client_order_id: str | None = None, **kwargs) -> dict:
-        if not self.live_trading_enabled:
-            raise MT5IntegrationError("Demo execution is disabled until live_trading_enabled is true.")
+        if self.live_trading_enabled or not self.demo_execution_enabled:
+            raise MT5IntegrationError("Demo order execution is disabled; explicitly enable demo execution while live trading remains off.")
         if stop_loss is None or take_profit is None:
             raise MT5IntegrationError("Every demo order requires stop-loss and take-profit.")
         if not self._is_demo_server() or self.credentials.get("environment", "demo").lower() != "demo":
@@ -454,7 +457,7 @@ class DirectBrokerAdapter(LiveAdapterBase):
         return BrokerCapabilities(platform="direct-api", supports_official_api=True, metadata={"protocol": "broker-specific official API"})
 
 
-def create_broker_adapter(name: str, credentials: Mapping[str, str] | None = None, live_trading_enabled: bool = False):
+def create_broker_adapter(name: str, credentials: Mapping[str, str] | None = None, live_trading_enabled: bool = False, demo_execution_enabled: bool = False):
     adapters = {
         "paper": PaperBrokerAdapter,
         "mt5": MT5Adapter,
@@ -471,5 +474,5 @@ def create_broker_adapter(name: str, credentials: Mapping[str, str] | None = Non
         return adapter_type()
     if name.lower() == "ctrader-demo":
         from xyfuss_forex_autopilot.brokers.ctrader import CTraderDemoAdapter
-        return CTraderDemoAdapter(credentials=credentials, live_trading_enabled=live_trading_enabled)
-    return adapter_type(credentials=credentials, live_trading_enabled=live_trading_enabled)
+        return CTraderDemoAdapter(credentials=credentials, live_trading_enabled=live_trading_enabled, demo_execution_enabled=demo_execution_enabled)
+    return adapter_type(credentials=credentials, live_trading_enabled=live_trading_enabled, demo_execution_enabled=demo_execution_enabled)

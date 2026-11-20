@@ -46,6 +46,7 @@ def main() -> int:
             "scheduler_interval_seconds": settings.scheduler_interval_seconds,
             "trading_mode": settings.trading_mode,
             "live_trading_enabled": settings.live_trading_enabled,
+            "demo_execution_enabled": settings.demo_execution_enabled,
             "dashboard_access_token": settings.dashboard_access_token,
             "dashboard_password_hash": dashboard_password_hash,
         }
@@ -116,6 +117,7 @@ def main() -> int:
         print("XYFUSS Forex Autopilot is operational in paper-only mode.")
         print(f"Mode: {settings.trading_mode}")
         print(f"Live trading enabled: {settings.live_trading_enabled}")
+        print(f"Demo order execution enabled: {settings.demo_execution_enabled}")
         return 0
 
     if args.command == "simulate":
