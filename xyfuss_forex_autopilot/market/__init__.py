@@ -185,7 +185,12 @@ class MarketUniverseScanner:
         max_age_seconds: float = 900.0,
         minimum_candles: int = 30,
     ) -> dict:
-        if allowed_symbols is None or max_age_seconds <= 0 or minimum_candles < 1:
+        if (
+            allowed_symbols is None
+            or not isfinite(float(max_age_seconds))
+            or max_age_seconds <= 0
+            or minimum_candles < 1
+        ):
             return {
                 "status": "blocked",
                 "reason": "Invalid scan configuration or missing symbol allowlist.",
@@ -195,6 +200,8 @@ class MarketUniverseScanner:
                 "no_trade": [],
             }
 
+        if isinstance(allowed_symbols, str):
+            allowed_symbols = [allowed_symbols]
         requested = []
         seen = set()
         for item in allowed_symbols:
@@ -238,7 +245,7 @@ class MarketUniverseScanner:
         by_name = {
             self._normalise_symbol(item.get("name", "")): item
             for item in available
-            if item.get("name")
+            if isinstance(item, dict) and item.get("name")
         }
         results = []
         candidates = []
