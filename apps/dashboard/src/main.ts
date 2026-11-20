@@ -14,7 +14,8 @@ const navigation: { page: Page; icon: string }[] = [
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("Dashboard root element #app was not found");
 
-let currentPage: Page = "Overview";
+const connectedReturn = new URLSearchParams(window.location.search).get("ctrader") === "connected";
+let currentPage: Page = connectedReturn ? "Settings" : "Overview";
 
 function pageContent(page: Page): string {
   if (page === "Overview") return overview();
