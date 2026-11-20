@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Iterable
 
 
@@ -145,4 +146,229 @@ class TradeIdeaBuilder:
             "confidence": confidence,
             "rationale": rationale,
             "evidence": evidence,
+        }
+
+
+class MarketUniverseScanner:
+    """Scan an explicit broker-symbol allowlist and rank evidence-backed candidates.
+
+    This component never submits, modifies, or closes broker orders.
+    """
+
+    def __init__(
+        self,
+        market_investigator: MarketInvestigator | None = None,
+        strategy_engine=None,
+        evidence_verifier=None,
+        no_trade_engine=None,
+    ):
+        from xyfuss_forex_autopilot.backtesting import NoTradeDecisionEngine
+        from xyfuss_forex_autopilot.recommendations import EvidenceVerifier
+        from xyfuss_forex_autopilot.strategies import StrategyCompetitionEngine
+
+        self.market_investigator = market_investigator or MarketInvestigator()
+        self.strategy_engine = strategy_engine or StrategyCompetitionEngine()
+        self.evidence_verifier = evidence_verifier or EvidenceVerifier()
+        self.no_trade_engine = no_trade_engine or NoTradeDecisionEngine()
+
+    @staticmethod
+    def _normalise_symbol(symbol: str) -> str:
+        return str(symbol).upper().replace("/", "").replace("_", "").replace("-", "").strip()
+
+    def scan(
+        self,
+        broker,
+        allowed_symbols: Iterable[str],
+        period: str = "M5",
+        weeks: int = 1,
+        count: int = 500,
+        max_age_seconds: float = 900.0,
+        minimum_candles: int = 30,
+    ) -> dict:
+        if (
+            allowed_symbols is None
+            or not isfinite(float(max_age_seconds))
+            or max_age_seconds <= 0
+            or minimum_candles < 1
+        ):
+            return {
+                "status": "blocked",
+                "reason": "Invalid scan configuration or missing symbol allowlist.",
+                "scanned": 0,
+                "candidates": [],
+                "best_candidate": None,
+                "no_trade": [],
+            }
+
+        if isinstance(allowed_symbols, str):
+            allowed_symbols = [allowed_symbols]
+        requested = []
+        seen = set()
+        for item in allowed_symbols:
+            symbol = str(item).strip()
+            key = self._normalise_symbol(symbol)
+            if key and key not in seen:
+                requested.append((symbol, key))
+                seen.add(key)
+
+        if not requested:
+            return {
+                "status": "blocked",
+                "reason": "An explicit non-empty market symbol allowlist is required.",
+                "scanned": 0,
+                "candidates": [],
+                "best_candidate": None,
+                "no_trade": [],
+            }
+
+        try:
+            available = broker.get_market_data()
+        except Exception as exc:
+            return {
+                "status": "blocked",
+                "reason": "Broker market catalogue could not be verified; no symbols were scanned.",
+                "error_type": type(exc).__name__,
+                "scanned": 0,
+                "candidates": [],
+                "best_candidate": None,
+                "no_trade": [],
+            }
+        if not isinstance(available, list):
+            return {
+                "status": "blocked",
+                "reason": "Broker returned an invalid market catalogue.",
+                "scanned": 0,
+                "candidates": [],
+                "best_candidate": None,
+                "no_trade": [],
+            }
+        by_name = {
+            self._normalise_symbol(item.get("name", "")): item
+            for item in available
+            if isinstance(item, dict) and item.get("name")
+        }
+        results = []
+        candidates = []
+
+        for requested_name, key in requested:
+            metadata = by_name.get(key)
+            if metadata is None:
+                results.append({
+                    "symbol": requested_name,
+                    "decision": "NO_TRADE",
+                    "reason": "Symbol is not available on the authorised broker account.",
+                })
+                continue
+
+            try:
+                candles = broker.get_historical_bars(
+                    symbol_id=int(metadata["symbol_id"]),
+                    period=period,
+                    weeks=weeks,
+                    count=count,
+                )
+                if len(candles) < minimum_candles:
+                    results.append({
+                        "symbol": requested_name,
+                        "decision": "NO_TRADE",
+                        "reason": "Insufficient historical candles for investigation.",
+                        "candle_count": len(candles),
+                    })
+                    continue
+
+                freshness = self.market_investigator.validate_freshness(
+                    candles,
+                    max_age_seconds=max_age_seconds,
+                )
+                if not freshness["fresh"]:
+                    results.append({
+                        "symbol": requested_name,
+                        "decision": "NO_TRADE",
+                        "reason": freshness["reason"],
+                        "freshness": freshness,
+                    })
+                    continue
+
+                market = self.market_investigator.investigate(requested_name, candles)
+                strategies = self.strategy_engine.run(requested_name, market)
+                directional = [
+                    item for item in strategies
+                    if str(getattr(item, "direction", "")).lower() in {"buy", "sell"}
+                ]
+                if not directional:
+                    results.append({
+                        "symbol": requested_name,
+                        "decision": "NO_TRADE",
+                        "reason": "No strategy produced a directional candidate.",
+                        "market": market,
+                    })
+                    continue
+
+                directional = [
+                    item for item in directional
+                    if isfinite(float(getattr(item, "score", float("nan"))))
+                    and isfinite(float(getattr(item, "confidence", float("nan"))))
+                ]
+                if not directional:
+                    results.append({
+                        "symbol": requested_name,
+                        "decision": "NO_TRADE",
+                        "reason": "Strategy outputs contained invalid numeric values.",
+                    })
+                    continue
+                best = max(directional, key=lambda item: float(item.score))
+                evidence = self.evidence_verifier.verify(
+                    market.get("evidence", []),
+                    threshold=0.55,
+                )
+                decision = self.no_trade_engine.decide(
+                    market,
+                    evidence,
+                    float(best.score),
+                )
+                if decision["no_trade"]:
+                    results.append({
+                        "symbol": requested_name,
+                        "decision": "NO_TRADE",
+                        "reason": decision["reasons"],
+                        "market": market,
+                        "evidence": evidence,
+                    })
+                    continue
+
+                candidate = {
+                    "symbol": requested_name,
+                    "decision": "CANDIDATE_FOR_RISK_ASSESSMENT",
+                    "direction": str(best.direction).lower(),
+                    "strategy": str(best.strategy_name),
+                    "score": float(best.score),
+                    "confidence": float(best.confidence),
+                    "rationale": str(best.rationale),
+                    "market": market,
+                    "evidence": evidence,
+                    "freshness": freshness,
+                }
+                candidates.append(candidate)
+                results.append(candidate)
+            except Exception as exc:
+                results.append({
+                    "symbol": requested_name,
+                    "decision": "NO_TRADE",
+                    "reason": "Market investigation failed; the symbol was rejected.",
+                    "error_type": type(exc).__name__,
+                })
+
+        candidates.sort(
+            key=lambda item: (item["score"], item["confidence"]),
+            reverse=True,
+        )
+        return {
+            "status": "complete",
+            "period": period,
+            "scanned": len(requested),
+            "candidate_count": len(candidates),
+            "candidates": candidates,
+            "best_candidate": candidates[0] if candidates else None,
+            "no_trade": [item for item in results if item["decision"] == "NO_TRADE"],
+            "results": results,
         }

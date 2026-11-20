@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib
 import threading
+import time
 from collections.abc import Mapping
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 
 from xyfuss_forex_autopilot.brokers import IdempotentOrderGate, LiveAdapterBase
@@ -14,6 +16,10 @@ class CTraderIntegrationError(RuntimeError):
 
 class OfficialCTraderBackend:
     """Official Spotware OpenApiPy transport, with demo endpoint enforced."""
+
+    # Values defined by ProtoOAClientPermissionScope in Spotware's protocol.
+    SCOPE_VIEW = 0
+    SCOPE_TRADE = 1
 
     def __init__(
         self,
@@ -29,13 +35,53 @@ class OfficialCTraderBackend:
             "client_id": client_id,
             "client_secret": client_secret,
             "access_token": access_token,
-            "ctid_trader_account_id": ctid_trader_account_id,
+            "ctid_trader_account_id": int(ctid_trader_account_id),
         }
+        self.permission_scope: int | None = None
+        self._authenticated = False
         self._client = None
         self._connected = threading.Event()
         self._disconnected = threading.Event()
+        self._heartbeat = None
+        self._historical_request_lock = threading.Lock()
+        self._last_historical_request = 0.0
+
+    def _validate_account_grant(self, response) -> int:
+        """Confirm the token grants the exact account selected by the operator."""
+        granted_accounts = getattr(response, "ctidTraderAccount", None)
+        if not granted_accounts:
+            raise CTraderIntegrationError("The cTrader access token has no authorised accounts.")
+
+        requested_id = self.credentials["ctid_trader_account_id"]
+        granted_ids = {
+            int(getattr(account, "ctidTraderAccountId", 0))
+            for account in granted_accounts
+        }
+        if requested_id not in granted_ids:
+            raise CTraderIntegrationError(
+                "The selected cTrader account is not authorised by this access token."
+            )
+
+        scope = int(getattr(response, "permissionScope", self.SCOPE_VIEW))
+        if scope not in (self.SCOPE_VIEW, self.SCOPE_TRADE):
+            raise CTraderIntegrationError("cTrader returned an unknown account permission scope.")
+        self.permission_scope = scope
+        return scope
+
+    def _require_trading_permission(self) -> None:
+        if self.permission_scope != self.SCOPE_TRADE:
+            raise CTraderIntegrationError(
+                "This cTrader token is view-only; trading permission was not granted."
+            )
 
     def connect(self) -> bool:
+        if self._authenticated and not self._disconnected.is_set():
+            return True
+        if self._client is not None:
+            self.disconnect()
+        self._connected.clear()
+        self._disconnected.clear()
+        self._authenticated = False
         try:
             api = importlib.import_module("ctrader_open_api")
             messages = importlib.import_module("ctrader_open_api.messages.OpenApiMessages_pb2")
@@ -50,14 +96,15 @@ class OfficialCTraderBackend:
             api.TcpProtocol,
         )
         self._client.setConnectedCallback(lambda _client: self._connected.set())
-        self._client.setDisconnectedCallback(lambda _client, _reason: self._disconnected.set())
-        self._client.startService()
+        self._client.setDisconnectedCallback(self._on_disconnected)
         from twisted.internet import reactor
-        threading.Thread(
-            target=lambda: reactor.run(installSignalHandlers=False),
-            name="xyfuss-ctrader-reactor",
-            daemon=True,
-        ).start()
+        self._client.startService()
+        if not reactor.running:
+            threading.Thread(
+                target=lambda: reactor.run(installSignalHandlers=False),
+                name="xyfuss-ctrader-reactor",
+                daemon=True,
+            ).start()
         if not self._connected.wait(timeout=15):
             return False
 
@@ -66,11 +113,59 @@ class OfficialCTraderBackend:
         application.clientSecret = self.credentials["client_secret"]
         self._wait(self._client.send(application))
 
+        # Spotware requires account discovery after application authorisation.
+        # Do not authorise an account merely because its ID was supplied locally.
+        account_list = messages.ProtoOAGetAccountListByAccessTokenReq()
+        account_list.accessToken = self.credentials["access_token"]
+        granted_accounts = self._wait(self._client.send(account_list))
+        self._validate_account_grant(granted_accounts)
+
         account = messages.ProtoOAAccountAuthReq()
         account.ctidTraderAccountId = self.credentials["ctid_trader_account_id"]
         account.accessToken = self.credentials["access_token"]
-        self._wait(self._client.send(account))
+        account_response = self._wait(self._client.send(account))
+        authorised_id = int(getattr(account_response, "ctidTraderAccountId", 0))
+        if authorised_id != self.credentials["ctid_trader_account_id"]:
+            raise CTraderIntegrationError("cTrader did not confirm authorisation for the selected account.")
+        self._authenticated = True
+        reactor.callFromThread(self._start_heartbeat)
         return True
+
+    def _on_disconnected(self, _client, _reason) -> None:
+        self._disconnected.set()
+        self._authenticated = False
+        self._stop_heartbeat()
+
+    def _start_heartbeat(self) -> None:
+        if not self._authenticated:
+            return
+        from twisted.internet.task import LoopingCall
+
+        if self._heartbeat is not None and self._heartbeat.running:
+            return
+        self._heartbeat = LoopingCall(self._send_heartbeat)
+        self._heartbeat.start(10.0, now=False)
+
+    def _send_heartbeat(self) -> None:
+        if self._client is None or not self._authenticated:
+            return
+        try:
+            messages = importlib.import_module("ctrader_open_api.messages.OpenApiCommonMessages_pb2")
+            heartbeat = messages.ProtoHeartbeatEvent()
+            deferred = self._client.send(heartbeat)
+            deferred.addErrback(self._heartbeat_failed)
+        except Exception as exc:
+            self._heartbeat_failed(exc)
+
+    def _heartbeat_failed(self, failure):
+        self._disconnected.set()
+        self._authenticated = False
+        self._stop_heartbeat()
+        return None
+
+    def _stop_heartbeat(self) -> None:
+        if self._heartbeat is not None and self._heartbeat.running:
+            self._heartbeat.stop()
 
     def _wait(self, deferred, timeout: float = 15.0):
         future = Future()
@@ -81,13 +176,27 @@ class OfficialCTraderBackend:
             raise CTraderIntegrationError("cTrader request timed out.") from exc
 
     def _request(self, request, timeout: float = 15.0):
-        if self._client is None:
-            raise CTraderIntegrationError("cTrader is not connected.")
+        if self._client is None or not self._authenticated or self._disconnected.is_set():
+            raise CTraderIntegrationError("cTrader account session is not authenticated.")
         return self._wait(self._client.send(request), timeout=timeout)
 
     def disconnect(self) -> None:
-        if self._client is not None:
-            self._client.stopService()
+        self._authenticated = False
+        client = self._client
+        self._client = None
+        if client is not None:
+            try:
+                from twisted.internet import reactor
+            except ImportError:
+                self._stop_heartbeat()
+                client.stopService()
+            else:
+                if reactor.running:
+                    reactor.callFromThread(self._stop_heartbeat)
+                    reactor.callFromThread(client.stopService)
+                else:
+                    self._stop_heartbeat()
+                    client.stopService()
 
     def symbols(self) -> list[dict]:
         messages = importlib.import_module("ctrader_open_api.messages.OpenApiMessages_pb2")
@@ -95,9 +204,104 @@ class OfficialCTraderBackend:
         request.ctidTraderAccountId = self.credentials["ctid_trader_account_id"]
         response = self._request(request)
         return [
-            {"symbol_id": symbol.symbolId, "name": getattr(symbol, "symbolName", "")}
+            {
+                "symbol_id": symbol.symbolId,
+                "name": getattr(symbol, "symbolName", ""),
+                "digits": int(getattr(symbol, "digits", 5)),
+            }
             for symbol in getattr(response, "symbol", [])
         ]
+
+    @staticmethod
+    def _normalise_trendbars(trendbars, digits: int) -> list[dict]:
+        """Convert cTrader's relative OHLC values into actual prices."""
+        if not 0 <= int(digits) <= 10:
+            raise CTraderIntegrationError("cTrader returned invalid symbol price precision.")
+
+        normalised = []
+        for bar in trendbars:
+            required_fields = ("low", "deltaOpen", "deltaClose", "deltaHigh", "utcTimestampInMinutes")
+            if hasattr(bar, "HasField"):
+                missing = [field for field in required_fields if not bar.HasField(field)]
+                if missing:
+                    raise CTraderIntegrationError(
+                        "cTrader returned an incomplete trend bar: " + ", ".join(missing)
+                    )
+
+            low_raw = int(getattr(bar, "low", 0))
+            open_raw = low_raw + int(getattr(bar, "deltaOpen", 0))
+            close_raw = low_raw + int(getattr(bar, "deltaClose", 0))
+            high_raw = low_raw + int(getattr(bar, "deltaHigh", 0))
+            if low_raw <= 0 or not (low_raw <= open_raw <= high_raw) or not (low_raw <= close_raw <= high_raw):
+                raise CTraderIntegrationError("cTrader returned inconsistent OHLC values.")
+
+            timestamp_minutes = int(getattr(bar, "utcTimestampInMinutes", 0))
+            if timestamp_minutes <= 0:
+                raise CTraderIntegrationError("cTrader trend bar has no valid timestamp.")
+
+            price = lambda raw: round(raw / 100000.0, int(digits))
+            normalised.append({
+                "timestamp": datetime.fromtimestamp(
+                    timestamp_minutes * 60, tz=timezone.utc
+                ).isoformat(),
+                "open": price(open_raw),
+                "high": price(high_raw),
+                "low": price(low_raw),
+                "close": price(close_raw),
+                "volume": int(getattr(bar, "volume", 0)),
+            })
+
+        normalised.sort(key=lambda item: item["timestamp"])
+        return normalised
+
+    def historical_bars(
+        self,
+        symbol_id: int,
+        period: str = "M5",
+        weeks: int = 1,
+        count: int = 500,
+    ) -> list[dict]:
+        """Fetch timestamped historical candles for one cTrader demo symbol."""
+        if int(symbol_id) <= 0:
+            raise CTraderIntegrationError("symbol_id must be a positive cTrader symbol ID.")
+        if not 1 <= int(weeks) <= 52:
+            raise CTraderIntegrationError("weeks must be between 1 and 52.")
+        if not 1 <= int(count) <= 1000:
+            raise CTraderIntegrationError("count must be between 1 and 1000.")
+
+        messages = importlib.import_module("ctrader_open_api.messages.OpenApiMessages_pb2")
+        model = importlib.import_module("ctrader_open_api.messages.OpenApiModelMessages_pb2")
+        try:
+            period_value = model.ProtoOATrendbarPeriod.Value(str(period).upper())
+        except (AttributeError, ValueError) as exc:
+            raise CTraderIntegrationError("Unsupported cTrader trend-bar period.") from exc
+
+        symbol = next(
+            (item for item in self.symbols() if int(item["symbol_id"]) == int(symbol_id)),
+            None,
+        )
+        if symbol is None:
+            raise CTraderIntegrationError("The selected symbol ID is not available on this account.")
+
+        with self._historical_request_lock:
+            elapsed = time.monotonic() - self._last_historical_request
+            if elapsed < 0.2:
+                time.sleep(0.2 - elapsed)
+            self._last_historical_request = time.monotonic()
+
+        now = datetime.now(timezone.utc)
+        request = messages.ProtoOAGetTrendbarsReq()
+        request.ctidTraderAccountId = self.credentials["ctid_trader_account_id"]
+        request.symbolId = int(symbol_id)
+        request.period = period_value
+        request.fromTimestamp = int((now - timedelta(weeks=int(weeks))).timestamp() * 1000)
+        request.toTimestamp = int(now.timestamp() * 1000)
+        request.count = int(count)
+        response = self._request(request, timeout=30.0)
+        return self._normalise_trendbars(
+            getattr(response, "trendbar", []),
+            digits=int(symbol["digits"]),
+        )
 
     def trader(self) -> dict:
         messages = importlib.import_module("ctrader_open_api.messages.OpenApiMessages_pb2")
@@ -126,6 +330,9 @@ class OfficialCTraderBackend:
         take_profit: float | None = None,
         broker_client_order_id: str | None = None,
     ) -> dict:
+        self._require_trading_permission()
+        if stop_loss is None or take_profit is None:
+            raise CTraderIntegrationError("Every cTrader demo order requires broker-side stop-loss and take-profit.")
         messages = importlib.import_module("ctrader_open_api.messages.OpenApiMessages_pb2")
         model = importlib.import_module("ctrader_open_api.messages.OpenApiModelMessages_pb2")
         request = messages.ProtoOANewOrderReq()
@@ -135,10 +342,8 @@ class OfficialCTraderBackend:
         request.tradeSide = trade_side
         request.volume = volume
         request.timeInForce = model.GOOD_TILL_CANCEL
-        if stop_loss is not None:
-            request.stopLoss = stop_loss
-        if take_profit is not None:
-            request.takeProfit = take_profit
+        request.stopLoss = stop_loss
+        request.takeProfit = take_profit
         if broker_client_order_id:
             request.clientOrderId = broker_client_order_id
         response = self._request(request)
@@ -188,6 +393,24 @@ class CTraderDemoAdapter(LiveAdapterBase):
             raise CTraderIntegrationError("cTrader demo connection is unavailable.")
         return self.backend.symbols()
 
+    def get_historical_bars(
+        self,
+        symbol_id: int,
+        period: str = "M5",
+        weeks: int = 1,
+        count: int = 500,
+    ) -> list[dict]:
+        if self.backend is None or not self.connect():
+            raise CTraderIntegrationError("cTrader demo connection is unavailable.")
+        if not hasattr(self.backend, "historical_bars"):
+            raise CTraderIntegrationError("The configured cTrader backend does not provide historical candles.")
+        return self.backend.historical_bars(
+            symbol_id=symbol_id,
+            period=period,
+            weeks=weeks,
+            count=count,
+        )
+
     def get_account_info(self) -> dict:
         if self.backend is None or not self.connect():
             return {"status": "disconnected", "connected": False}
@@ -221,6 +444,8 @@ class CTraderDemoAdapter(LiveAdapterBase):
             raise CTraderIntegrationError("client_order_id is required")
         if symbol_id is None:
             raise CTraderIntegrationError("symbol_id is required for cTrader order submission")
+        if stop_loss is None or take_profit is None:
+            raise CTraderIntegrationError("Every cTrader demo order requires stop-loss and take-profit.")
 
         trade_side = 1 if direction.lower() == "buy" else 2
         volume = int(round(lot_size * 100000))
