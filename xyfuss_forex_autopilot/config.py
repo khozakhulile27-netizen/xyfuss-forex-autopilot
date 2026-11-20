@@ -23,6 +23,12 @@ class Settings:
     server_host: str = "0.0.0.0"
     server_port: int = 8000
     scheduler_interval_seconds: int = 300
+    market_watchlist: list[str] = field(default_factory=list)
+    market_period: str = "M5"
+    market_history_weeks: int = 1
+    market_candle_count: int = 500
+    market_max_age_seconds: float = 900.0
+    market_minimum_candles: int = 30
     dashboard_access_token: str = ""
     profit_allocation_ledger: str = "data/profit_allocation.jsonl"
     trading_state_path: str = "data/trading-state.json"
