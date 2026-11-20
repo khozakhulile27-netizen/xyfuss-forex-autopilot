@@ -65,4 +65,4 @@ Dashboard checks:
     npm ci
     npm run build
 
-The repository is a development project, not a trading-ready product. Do not infer readiness from successful compilation or a successful network connection.
+The repository is a development project, not a trading-ready product. The cTrader account connection currently requests view-only access and is not an order-execution feature. Do not infer readiness from successful compilation or a successful network connection.
