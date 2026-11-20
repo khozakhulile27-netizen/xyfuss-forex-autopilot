@@ -232,10 +232,11 @@ class CTraderOAuthService:
     def status(self) -> dict:
         stored = self._load_tokens()
         if stored is None:
-            return {"connected": False, "provider": "cTrader", "environment": "demo"}
+            return {"connected": False, "configured": True, "provider": "cTrader", "environment": "demo"}
         _, expires_at = stored
         return {
             "connected": True,
+            "configured": True,
             "provider": "cTrader",
             "environment": "demo",
             "token_expires_at": expires_at,
@@ -257,7 +258,28 @@ def create_wsgi_app(service: CTraderOAuthService | None = None):
         method = environ.get("REQUEST_METHOD", "GET")
         redirect_location = None
         try:
-            active = service or CTraderOAuthService.from_environment()
+            if service is not None:
+                active = service
+            else:
+                try:
+                    active = CTraderOAuthService.from_environment()
+                except CTraderOAuthError:
+                    if path == "/api/v1/ctrader/status" and method == "GET":
+                        body = {
+                            "connected": False,
+                            "configured": False,
+                            "provider": "cTrader",
+                            "environment": "demo",
+                        }
+                        encoded = json.dumps(body).encode("utf-8")
+                        start_response("200 OK", [
+                            ("Content-Type", "application/json; charset=utf-8"),
+                            ("Content-Length", str(len(encoded))),
+                            ("Cache-Control", "no-store"),
+                            ("X-Content-Type-Options", "nosniff"),
+                        ])
+                        return [encoded]
+                    raise
             if path == "/api/v1/ctrader/connect" and method == "GET":
                 body = {"authorization_url": active.authorization_url()}
                 status = "200 OK"
